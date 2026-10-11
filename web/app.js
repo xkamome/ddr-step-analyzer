@@ -17,7 +17,7 @@ const BONES = [[17, 18, 'C'], [18, 5, 'L'], [18, 6, 'R'], [5, 7, 'L'], [7, 9, 'L
   [16, 25, 'R'], [16, 21, 'R'], [16, 23, 'R'], [21, 23, 'R'], [25, 21, 'R']];
 
 const S = { list: [], id: null, A: null, fi: 0, layers: { skel: 1, com: 1, grid: 1, feet: 1 },
-  win: 8, showAll: true, calib: null, drag: null, dirty: true, poll: null, ev: null };
+  win: 8, showAll: true, calib: null, drag: null, dirty: true, poll: null, ev: null, rot: {} };
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 const L = x => (x && typeof x === 'object') ? (x[LANG] ?? x.zh) : x;    // 後端雙語文字 {zh, ja}
 const dirTxt = x => t('dir', { x: tv(x) });
@@ -136,7 +136,7 @@ function renderAll() {
   if (ae) for (const sd of ['R', 'L']) if (ae[sd] >= 20) b.push([t('b.armEst', { s: t('foot.' + sd + 'h'), p: Math.round(ae[sd]) }), 1]);
   b.push([t('b.steps', { n: A.metrics.steps, r: A.metrics.steps_per_s ?? '-' })]);
   $('#badges').innerHTML = b.map(([s, hl]) => `<span class="badge${hl ? ' hl' : ''}">${esc(s)}</span>`).join('');
-  renderAdvice(); renderEvents(); renderSteps(); renderMetrics(); renderEvSel(); redraw();
+  renderAdvice(); renderEvents(); renderSteps(); renderMetrics(); renderEvSel(); updPadRotBtn(); redraw();
 }
 
 // ───────── 幀索引 ─────────
@@ -359,6 +359,42 @@ function label(g, [x, y], txt, col, alpha = 1) {
 }
 
 // ───────── 俯視踏板 ─────────
+// 俯視圖旋轉（順時針 0/90/180/270°）：讓俯視圖跟影片同方向，只改畫法，資料仍是踏板座標。
+// 預設依校正自動判斷；手動轉過的角度每部影片各自記在瀏覽器。
+const ROT_KEY = 'ddr-padrot:';
+const rotCS = d => [Math.round(Math.cos(d * Math.PI / 180)), Math.round(Math.sin(d * Math.PI / 180))];
+function autoPadRot() {
+  // 鏡頭在踏板的哪一側：影片中踏板中心往下一點的地面點 → 換回踏板座標，就是朝鏡頭的方向。
+  // 轉到讓鏡頭那側在俯視圖下方；斜角拍（鏡頭在後方 ±60° 內）維持 0°。
+  const P = S.A && S.A.view.mode !== 'none' && S.A.calibration.points;
+  if (!P || !'LDUR'.split('').every(k => P[k])) return 0;
+  const H = padH(), c = ap3(H, [0, 0]), s = Math.hypot(P.R[0] - P.L[0], P.R[1] - P.L[1]) / 2;
+  const v = ap3(inv3(H), [c[0], c[1] + 0.5 * s]), n = Math.hypot(...v);
+  if (!(n > 1e-6)) return 0;
+  const score = d => { const [cs, sn] = rotCS(d); return (v[0] * sn + v[1] * cs) / n; };   // 轉 d 度後朝下的程度
+  if (score(0) >= 0.5) return 0;
+  return [90, 180, 270].reduce((a, d) => score(d) > score(a) ? d : a);
+}
+function manualPadRot() {
+  if (!(S.id in S.rot)) {
+    let v = null; try { v = localStorage.getItem(ROT_KEY + S.id); } catch (_) { /* 無痕模式等 */ }
+    S.rot[S.id] = v != null && [0, 90, 180, 270].includes(+v) ? +v : null;
+  }
+  return S.rot[S.id];
+}
+const padRot = () => S.A ? (manualPadRot() ?? autoPadRot()) : 0;
+const unrotPad = (x, y) => { const [c, s] = rotCS(padRot()); return [x * c + y * s, -x * s + y * c]; };   // 畫面方向 → 踏板方向
+function updPadRotBtn() {
+  const b = $('#padRot'); if (!S.A) { b.textContent = '↻'; return; }
+  b.textContent = `↻ ${padRot()}°` + (manualPadRot() == null ? t('pad.rotAuto') : '');
+}
+$('#padRot').onclick = () => {
+  if (!S.A) return;
+  const d = (padRot() + 90) % 360, auto = d === autoPadRot();   // 轉回自動判斷的角度就不再記
+  S.rot[S.id] = auto ? null : d;
+  try { auto ? localStorage.removeItem(ROT_KEY + S.id) : localStorage.setItem(ROT_KEY + S.id, String(d)); } catch (_) { /* 忽略 */ }
+  updPadRotBtn(); redraw();
+};
 function drawFootOnPad(g, P, st, col, width, alpha) {
   const he = st.heel_ext || st.heel_pad, te = st.toe_ext || st.toe_pad;
   if (!he || he[1] == null || !te || te[1] == null) return;
@@ -378,7 +414,14 @@ function mul3(A, B) { return [0, 1, 2].flatMap(i => [0, 1, 2].map(j => A[i * 3] 
 function drawPad() {
   const [g, w] = fitCanvas(padCv); if (!S.A) return;
   const A = S.A, F = A.frames, i = S.fi, tm = F.t[i];
-  const R = 2.1, sc = w / (2 * R), P0 = (x, y) => [w / 2 + x * sc, w / 2 + y * sc];
+  const R = 2.1, sc = w / (2 * R), rot = padRot(), [rc, rs] = rotCS(rot);
+  const P0 = (x, y) => [w / 2 + (x * rc - y * rs) * sc, w / 2 + (x * rs + y * rc) * sc];
+  // 貼著某一邊寫字（(dx, dy) 為踏板方向，(0,-1)＝螢幕那邊）；轉到左右兩邊時直著寫
+  const edgeText = (txt, dx, dy) => {
+    const ex = dx * rc - dy * rs, ey = dx * rs + dy * rc, m = w / 2 - 8;
+    g.save(); g.translate(w / 2 + ex * m, w / 2 + ey * m); g.rotate(ex * Math.PI / 2);
+    g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(txt, 0, 0); g.restore();
+  };
   const G = calibPreviewMap();
   const P = G ? (x, y) => P0(...ap3(G, [x, y])) : P0;       // 資料點用 P（校正預覽會跟著動），格線用 P0
   // 腳：資料已含舊的手動偏移 off0；校正中預覽改成新偏移 off1
@@ -386,8 +429,8 @@ function drawPad() {
   const PF = (x, y) => { const q = [x - off0[0], y - off0[1]], [u, v] = G ? ap3(G, q) : q; return P0(u + off1[0], v + off1[1]); };
   const side = A.view.mode === 'side';
   for (let gx = -1; gx <= 1; gx++) for (let gy = -1; gy <= 1; gy++) {
-    const [x, y] = P0(gx - 0.5, gy - 0.5); const arrow = Math.abs(gx) + Math.abs(gy) === 1;
-    g.fillStyle = arrow ? '#232a38' : '#1a1f29'; g.fillRect(x + 1, y + 1, sc - 2, sc - 2);
+    const [x, y] = P0(gx, gy); const arrow = Math.abs(gx) + Math.abs(gy) === 1;
+    g.fillStyle = arrow ? '#232a38' : '#1a1f29'; g.fillRect(x - sc / 2 + 1, y - sc / 2 + 1, sc - 2, sc - 2);
   }
   g.strokeStyle = G ? '#facc15' : '#3a4252'; g.lineWidth = 1;
   for (let v = -1.5; v <= 1.5; v += 1) {
@@ -396,11 +439,12 @@ function drawPad() {
   }
   for (const [k, [ax, ay]] of Object.entries(ARROW_POS)) {
     const lit = F.lights && F.lights[ARROW_KEYS[k]][i] > 0.4;
-    if (lit) { const [x, y] = P0(ax - 0.5, ay - 0.5); g.fillStyle = ARROW_COL[k]; g.globalAlpha = 0.35; g.fillRect(x + 1, y + 1, sc - 2, sc - 2); g.globalAlpha = 1; }
-    drawArrow(g, P0(ax, ay), sc * 0.28, k, ARROW_COL[k]);
+    if (lit) { const [x, y] = P0(ax, ay); g.fillStyle = ARROW_COL[k]; g.globalAlpha = 0.35; g.fillRect(x - sc / 2 + 1, y - sc / 2 + 1, sc - 2, sc - 2); g.globalAlpha = 1; }
+    drawArrow(g, P0(ax, ay), sc * 0.28, k, ARROW_COL[k], rot * Math.PI / 180);
   }
-  g.fillStyle = '#6b7280'; g.font = '11px sans-serif'; g.textAlign = 'center';
-  g.fillText(t('pad.screen'), w / 2, 12);
+  g.fillStyle = '#6b7280'; g.font = '11px sans-serif';
+  edgeText(t('pad.screen'), 0, -1);
+  g.textAlign = 'center';
   if (A.view.mode === 'none' && !(S.calib && S.calib.pick)) { g.fillStyle = '#9ca3af'; g.fillText(t('pad.noCalib'), w / 2, w / 2); return; }
   if (S.calib && S.calib.pick) {                          // 選對應點模式：只畫可選的點
     const pk = S.calib.pick, keys = Object.keys(pk.pairs), cur = pk.sel || nextDefaultTarget(pk);
@@ -471,7 +515,8 @@ function drawPad() {
   if (S.calib && !S.calib.pick) {                          // 目前的手動腳位置偏移
     const [ox, oy] = S.calib.footOff;
     if (Math.hypot(ox, oy) > 0.005) { g.fillStyle = '#facc15'; g.font = '11px sans-serif'; g.textAlign = 'right';
-      g.fillText(t('pad.footOff', { x: (ox * 28).toFixed(0), y: (oy * 28).toFixed(0) }), w - 6, w - 6); }
+      // 轉 180° 時「螢幕方向」在下面 → 改寫在右上角
+      g.fillText(t('pad.footOff', { x: (ox * 28).toFixed(0), y: (oy * 28).toFixed(0) }), w - 6, rot === 180 ? 16 : w - 6); }
   }
   // 重心
   const c = F.com_pad[i], ax = A.view.com_axis;
@@ -480,7 +525,7 @@ function drawPad() {
     // 重心只量得到沿 ax 的位置 → 畫一條與 ax 垂直的虛線：重心在這條線上的某處
     const o = F.com_obs[i] ?? 0, wv = [-ax[1], ax[0]];
     const a0 = [ax[0] * o - wv[0] * 2, ax[1] * o - wv[1] * 2], a1 = [ax[0] * o + wv[0] * 2, ax[1] * o + wv[1] * 2];
-    g.save(); g.beginPath(); g.rect(...P0(-1.5, -1.5), 3 * sc, 3 * sc); g.clip();
+    g.save(); g.beginPath(); g.rect(w / 2 - 1.5 * sc, w / 2 - 1.5 * sc, 3 * sc, 3 * sc); g.clip();
     g.strokeStyle = COL.com; g.lineWidth = 1.5; g.setLineDash([4, 4]);
     g.beginPath(); g.moveTo(...P(...a0)); g.lineTo(...P(...a1)); g.stroke(); g.setLineDash([]); g.restore();
     g.strokeStyle = 'rgba(250,204,21,.25)'; g.lineWidth = 1;
@@ -496,10 +541,10 @@ function drawPad() {
     const [x, y] = P(...comXY(c));
     g.fillStyle = COL.com; g.strokeStyle = '#000'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, 7, 0, 7); g.fill(); g.stroke();
   }
-  if (side) { g.fillStyle = '#9ca3af'; g.font = '11px sans-serif'; g.fillText(t('pad.sideNote'), w / 2, w - 6); }
+  if (side) { g.fillStyle = '#9ca3af'; g.font = '11px sans-serif'; edgeText(t('pad.sideNote'), 0, 1); }
 }
-function drawArrow(g, [x, y], r, k, col) {
-  const ang = { U: 0, R: Math.PI / 2, D: Math.PI, L: -Math.PI / 2 }[k];
+function drawArrow(g, [x, y], r, k, col, rot = 0) {
+  const ang = { U: 0, R: Math.PI / 2, D: Math.PI, L: -Math.PI / 2 }[k] + rot;
   g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = col; g.globalAlpha = 0.35;
   g.beginPath(); g.moveTo(0, -r); g.lineTo(r * 0.9, 0); g.lineTo(r * 0.35, 0); g.lineTo(r * 0.35, r);
   g.lineTo(-r * 0.35, r); g.lineTo(-r * 0.35, 0); g.lineTo(-r * 0.9, 0); g.closePath(); g.fill();
@@ -863,7 +908,8 @@ padCv.addEventListener('pointerdown', e => {
 });
 padCv.addEventListener('pointermove', e => {
   const d = S.padDrag; if (!d) return;
-  S.calib.footOff = [d.o0[0] + (e.clientX - d.x) / d.sc, d.o0[1] + (e.clientY - d.y) / d.sc];
+  const [dx, dy] = unrotPad((e.clientX - d.x) / d.sc, (e.clientY - d.y) / d.sc);
+  S.calib.footOff = [d.o0[0] + dx, d.o0[1] + dy];
   redraw();
 });
 padCv.addEventListener('pointerup', () => { S.padDrag = null; });
@@ -871,7 +917,7 @@ padCv.addEventListener('pointerup', () => { S.padDrag = null; });
 padCv.addEventListener('pointerdown', e => {
   const pk = S.calib && S.calib.pick; if (!pk) return;
   const r = padCv.getBoundingClientRect(), w = r.width, sc = w / 4.2;
-  const px = (e.clientX - r.left - w / 2) / sc, py = (e.clientY - r.top - w / 2) / sc;
+  const [px, py] = unrotPad((e.clientX - r.left - w / 2) / sc, (e.clientY - r.top - w / 2) / sc);
   let best = null, bd = 0.35;
   for (const p of PICK_TARGETS) { const d = Math.hypot(p[0] - px, p[1] - py); if (d < bd) { bd = d; best = p; } }
   if (best) { pk.sel = best; redraw(); }

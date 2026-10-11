@@ -10,7 +10,7 @@
 
 ## 下載與安裝（Windows）
 
-1. 打開 [Releases 頁面](https://github.com/xkamome/ddr-step-analyzer/releases/latest)，下載 `ddr-step-analyzer_v1.2.zip` 這類名稱的 zip（數字是版本）。
+1. 打開 [Releases 頁面](https://github.com/xkamome/ddr-step-analyzer/releases/latest)，下載 `ddr-step-analyzer_v1.3.zip` 這類名稱的 zip（數字是版本）。
    （也可以按本頁綠色的「Code」→「Download ZIP」，內容相同）
 2. zip 按右鍵 →「解壓縮全部」，建議放在 `C:\ddr-step-analyzer`（避開桌面與 OneDrive 資料夾）。
 3. 雙擊資料夾裡的 `setup.bat`。出現藍色「Windows 已保護您的電腦」時，按「其他資訊」→「仍要執行」。
@@ -87,6 +87,8 @@ python -m ddrpose.analyze data\IMG_1194                          # 分析（改�
 
 - 右上角可切換中文／日文（介面文字與修正建議都是中日雙語）。
 - 「重心事件」分頁：點一下跳到該處以 0.25× 慢放，俯視圖畫出該段重心軌跡與編號腳步。
+- 俯視圖方向：依校正結果判斷鏡頭在踏板哪一側，自動旋轉讓鏡頭那側在下方（正面拍＝轉 180°；斜後方 ±60° 內維持 0°），「螢幕」字樣標出遊戲螢幕那邊。
+  右上 **↻** 每按一次轉 90°，每部影片各自記在瀏覽器（localStorage）；轉回自動判斷的角度就恢復自動。只改畫法，資料仍是踏板座標。
 
 ## 限制
 
