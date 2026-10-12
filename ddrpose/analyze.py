@@ -339,12 +339,14 @@ def _kmeans1d(x, k=3, it=30):
 
 # ───────────────────────── 重心 ─────────────────────────
 
-def compute_com(X, rel, S, W, H):
+def compute_com(X, rel, S, W, H, hidden=()):
     """Winter 人體分段質量模型（總和 1.0）：
       軀幹 0.497（骨盆→肩膀中點 50%）、頭頸 0.081（沿軀幹方向、肩膀上方 30% 軀幹長）、
       上臂 0.028／前臂 0.016／手 0.006（每側）、大腿 0.100／小腿 0.0465／腳 0.0145（每側）。
     看不到（畫面外、貼邊、疊到另一隻手上）的手臂不用它的點：改用看得到那隻手臂的角度對軀幹中線鏡像；
-    兩隻都看不到就當作自然下垂。某側肩膀不可靠時，軀幹方向改用另一側「肩→髖」。
+    兩隻都看不到就當作自然下垂。只有手腕看得到（手肘被畫面切掉）時，手腕用實際點、手肘取肩膀與手腕中點。
+    hidden：使用者指定不在畫面裡的手臂（'L'/'R'），完全不用它的點。
+    某側肩膀不可靠時，軀幹方向改用另一側「肩→髖」。
     回傳 (com, mode, 手臂是否為推估 {L,R: (N,) bool})。"""
     n = len(X)
     ok = lambda j: rel[:, j] & (S[:, j] >= 0.5)
@@ -376,28 +378,33 @@ def compute_com(X, rel, S, W, H):
     sh = {'L': np.where(sh_ok['L'][:, None], X[:, 5], shm - sw / 2),
           'R': np.where(sh_ok['R'][:, None], X[:, 6], shm + sw / 2)}
     shw = np.linalg.norm(sw, axis=1) + 1e-6
-    # 手臂：可靠 → 實際點；不可靠 → 另一隻手臂對軀幹中線鏡像；都不可靠 → 自然下垂
+    # 手臂：可靠 → 實際點；只有手腕可靠 → 手腕實際點＋手肘取肩膀與手腕中點（扶桿時手臂接近伸直）；
+    # 不可靠或指定不在畫面 → 另一隻手臂對軀幹中線鏡像；都不可靠 → 自然下垂
     ARMJ = {'L': (7, 9), 'R': (8, 10)}
-    arm_ok = {}
+    wr_ok, own_e = {}, {}
     for s_, (el, wr) in ARMJ.items():
-        o_wr = ARMJ['R' if s_ == 'L' else 'L'][1]
+        o = 'R' if s_ == 'L' else 'L'
+        o_wr = ARMJ[o][1]
         # 兩手腕疊在一起：通常是模型把看不到的手畫到看得到的手上 → 只判信心較低的那隻不可靠
-        collapsed = (np.linalg.norm(X[:, wr] - X[:, o_wr], axis=1) < 0.35 * shw) & (S[:, wr] < S[:, o_wr])
-        arm_ok[s_] = (ok(el) & ok(wr) & ~edge(el) & ~edge(wr) & (S[:, wr] >= 0.55) & ~collapsed & sh_ok[s_])
+        # （另一隻已指定不在畫面時不用比，它的點本來就是模型猜的）
+        collapsed = (np.linalg.norm(X[:, wr] - X[:, o_wr], axis=1) < 0.35 * shw) & (S[:, wr] < S[:, o_wr]) & (o not in hidden)
+        wr_ok[s_] = ok(wr) & ~edge(wr) & (S[:, wr] >= 0.55) & ~collapsed & (s_ not in hidden)
+        el_ok = wr_ok[s_] & ok(el) & ~edge(el) & sh_ok[s_]
+        own_e[s_] = np.where(el_ok[:, None], X[:, el], (sh[s_] + X[:, wr]) / 2)
     ax = tv / (np.linalg.norm(tv, axis=1, keepdims=True) + 1e-9)
     refl = lambda v: 2 * (v * ax).sum(1, keepdims=True) * ax - v
     elbow, wrist, est = {}, {}, {}
     for s_, (el, wr) in ARMJ.items():
         o = 'R' if s_ == 'L' else 'L'
-        oel, owr = ARMJ[o]
-        e_m = sh[s_] + refl(X[:, oel] - sh[o])
-        w_m = e_m + refl(X[:, owr] - X[:, oel])
+        owr = ARMJ[o][1]
+        e_m = sh[s_] + refl(own_e[o] - sh[o])
+        w_m = e_m + refl(X[:, owr] - own_e[o])
         e_h = sh[s_] - 0.45 * tv                          # 自然下垂
         w_h = e_h - 0.40 * tv
-        use_m = ~arm_ok[s_] & arm_ok[o]
-        elbow[s_] = np.where(arm_ok[s_][:, None], X[:, el], np.where(use_m[:, None], e_m, e_h))
-        wrist[s_] = np.where(arm_ok[s_][:, None], X[:, wr], np.where(use_m[:, None], w_m, w_h))
-        est[s_] = ~arm_ok[s_]
+        use_m = ~wr_ok[s_] & wr_ok[o]
+        elbow[s_] = np.where(wr_ok[s_][:, None], own_e[s_], np.where(use_m[:, None], e_m, e_h))
+        wrist[s_] = np.where(wr_ok[s_][:, None], X[:, wr], np.where(use_m[:, None], w_m, w_h))
+        est[s_] = ~wr_ok[s_]
     com = 0.497 * (hip + 0.5 * tv) + 0.081 * (shm + 0.3 * tv)
     for s_ in 'LR':
         e, w_ = elbow[s_], wrist[s_]
@@ -618,6 +625,10 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
     fps = 1.0 / np.median(np.diff(t)) if n > 1 else 30.0
     if calib is None and (vid_dir / 'calib.json').exists():
         calib = json.loads((vid_dir / 'calib.json').read_text(encoding='utf-8'))
+    # 每支影片的設定：lights=False → 這台踏板不會亮燈（例：舊白框體，喇叭燈的反光會被誤認成亮燈），
+    # 不用亮燈找板位、也不以亮燈修正板位；hidden_arms → 不在畫面裡的手（骨架點是模型猜的）
+    use_lights = (calib or {}).get('lights', True) is not False
+    hidden_arms = {s for s in (calib or {}).get('hidden_arms', []) if s in LEG}
 
     if _swap_all:
         K, S = _swap_legs(K, S, np.ones(len(K), bool))
@@ -685,7 +696,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
         if source == 'auto':
             foot_pts = auto_homography(P, f) if not side else None
             gp = None
-            if (vid_dir / 'preview.mp4').exists():
+            if use_lights and (vid_dir / 'preview.mp4').exists():
                 from .glow import glow_map, glow_points
                 Fg, gs, Fr_glow = glow_map(vid_dir, Mot, meta['width'], play)
                 gp = glow_points(Fg, gs, P, f, init_pts=foot_pts)
@@ -848,7 +859,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
     #    （骨架的腳跟點通常比鞋跟內縮，用腳跟踩 ↓ 會判不到），自動校正時也微調九宮格；
     # 3) 以亮燈為準修正每步的板位，並補回「有亮燈、骨架卻沒偵測到落地」的步。
     lights, fit_info, n_light_only = None, None, 0
-    if view['mode'] == 'homography' and (vid_dir / 'preview.mp4').exists():
+    if use_lights and view['mode'] == 'homography' and (vid_dir / 'preview.mp4').exists():
         from .glow import glow_map, lit_at_step, light_onsets, panel_lights
         Fg, gs, Fr_glow = glow_map(vid_dir, Mot, meta['width'], play)
         lights = panel_lights(Fr_glow, gs, np.linalg.inv(_h_from_points(pts)))
@@ -961,7 +972,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
                                    lift_cm=_r(lift * SHANK_CM, 1)))
 
     # ── 重心 ──
-    com, com_mode, arm_est = compute_com(X, rel, S, meta['width'], meta['height'])
+    com, com_mode, arm_est = compute_com(X, rel, S, meta['width'], meta['height'], hidden_arms)
     hip = (X[:, 11] + X[:, 12]) / 2
     # 重心的地面深度基準用「扣掉鞋底高度」後的腳，才會和俯視圖上的腳一致
     gL = np.array([drop(g['L'][i_], 'L', i_, sole_h) for i_ in range(n)]).reshape(-1, 2)
@@ -1000,6 +1011,8 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
     # ── 扶桿（手腕長時間固定不動） ──
     hold, hold_mask = {}, {}
     for s, wr in (('L', 9), ('R', 10)):
+        if s in hidden_arms:
+            continue
         m = rel[:, wr] & (S[:, wr] > 0.5)
         if m.mean() < 0.3:
             continue
@@ -1034,7 +1047,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
 
     metrics, advice = _metrics_and_advice(
         t, fps, view, steps, swings, com_obs, com_rel, axis_info, hip_h, leg_px / S_glob, knee, planted,
-        side_view, hold, source, com_mode, play_s=play.sum() / fps)
+        side_view, hold, source, com_mode, play_s=play.sum() / fps, use_lights=use_lights)
     _heel_and_event_advice(metrics, advice, steps, events, ev_stats, axis_info)
 
     grid = _grid_lines(pts, view) if pts is not None else []
@@ -1052,7 +1065,8 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
                         'points': {k: [_r(v[0], 1), _r(v[1], 1)] for k, v in pts.items()} if pts else None,
                         'grid': grid, 'foot_ext': list(foot_ext), 'fit': fit_info,
                         'sole_h': _r(sole_h, 1), 'foot_offset': [_r(foot_off[0]), _r(foot_off[1])],
-                        'light_only_steps': n_light_only},
+                        'light_only_steps': n_light_only,
+                        'lights': use_lights, 'hidden_arms': sorted(hidden_arms)},
         'frames': {
             't': [_r(v) for v in t],
             'kpts': np.round(np.nan_to_num(np.where(rel[..., None], X, np.nan), nan=-1), 1).tolist(),
@@ -1194,6 +1208,19 @@ def _adv(A, area, level, title, evidence, fix):
                   evidence=dict(zh=evidence[0], ja=evidence[1]), fix=dict(zh=fix[0], ja=fix[1])))
 
 
+def _part_summary(parts):
+    """{箭頭: {部位: 步數}} → 每個箭頭一句（前兩名部位），(中文列表, 日文列表)。"""
+    dz, dj = [], []
+    for arrow in ('←', '↓', '↑', '→'):
+        pp = parts.get(arrow)
+        if pp:
+            tot = sum(pp.values())
+            top = sorted(pp.items(), key=lambda kv: -kv[1])[:2]
+            dz.append(f"{arrow} {tot} 步（" + '、'.join(f'{k} {v}' for k, v in top) + '）')
+            dj.append(f"{arrow} {tot} 歩（" + '・'.join(f'{ja(k)} {v}' for k, v in top) + '）')
+    return dz, dj
+
+
 AUTO_NOTE = ('（這是用腳印分群做的自動校正：落點是和自己的平均落點比，不是和實際箭頭中心比；要看絕對偏移請手動校正）',
              '（足跡クラスタによる自動補正のため、ずれは自分の平均着地点との比較です。矢印の中心からの絶対的なずれを見るには手動補正してください）')
 
@@ -1261,7 +1288,7 @@ def _axis_names(a):
 
 
 def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip_h, leg_ratio, knee,
-                        planted, side_view, hold, source, com_mode, play_s=None):
+                        planted, side_view, hold, source, com_mode, play_s=None, use_lights=True):
     M, A = {}, []
     dur = float(play_s) if play_s is not None else (float(t[-1] - t[0]) if len(t) > 1 else 0)
     M['duration_s'] = _r(dur, 1)
@@ -1435,14 +1462,7 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
                 M['lit_mismatch'] = dict(sorted(mism.items(), key=lambda kv: -kv[1])[:6])
                 M['press_part'] = parts
                 M['lit_untouched'] = sum(1 for s in lit if s.get('part') == '未碰到')
-                dz, dj = [], []
-                for arrow in ('←', '↓', '↑', '→'):
-                    pp = parts.get(arrow)
-                    if pp:
-                        tot = sum(pp.values())
-                        top = sorted(pp.items(), key=lambda kv: -kv[1])[:2]
-                        dz.append(f"{arrow} {tot} 步（" + '、'.join(f'{k} {v}' for k, v in top) + '）')
-                        dj.append(f"{arrow} {tot} 歩（" + '・'.join(f'{ja(k)} {v}' for k, v in top) + '）')
+                dz, dj = _part_summary(parts)
                 _adv(A, '踩點', 'info', ('用腳的哪個部位踩（以踏板亮燈為準）', 'どの部位で踏んだか（パネル点灯基準）'),
                      ('；'.join(dz) + f'。骨架判斷與亮燈一致 {agree:.0f}%' + (f'，另有 {n_lo} 步是只靠亮燈才抓到的' if n_lo else '') + '。',
                       '；'.join(dj) + f'。骨格判定と点灯の一致率は {agree:.0f}%' + (f'。ほかに点灯だけで検出した歩が {n_lo} 歩あります' if n_lo else '') + '。'),
@@ -1451,6 +1471,22 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
                       'パネルの判定は筐体の点灯を基準にし、かかと・つま先・足全体のどこで踏んだかを骨格から判定しています。'
                       'かかとで ↓、つま先で ↑ を踏むのは上級者によくある省エネの踏み方です。←→ もつま先やかかとの端だけで踏むことが多い場合は、'
                       '体の向きが追いついておらず、踏みが不安定になりがちです。'))
+            elif not use_lights:
+                # 不亮燈的機台：板位與部位都只靠骨架（腳長用預設，沒有亮燈校正）→ 參考值
+                parts = {}
+                for s in arrow_steps:
+                    if s.get('part'):
+                        parts.setdefault(s['panel'], {}).setdefault(s['part'], 0)
+                        parts[s['panel']][s['part']] += 1
+                if parts:
+                    M['press_part'] = parts
+                    dz, dj = _part_summary(parts)
+                    _adv(A, '踩點', 'info', ('用腳的哪個部位踩（骨架判斷・參考值）', 'どの部位で踏んだか（骨格判定・参考値）'),
+                         ('；'.join(dz) + '。這支影片設定為「踏板不亮燈」，板位與部位都只靠骨架判斷、沒有亮燈確認，信心較低。',
+                          '；'.join(dj) + '。この動画は「パネルが点灯しない」設定のため、パネルも部位も骨格だけで判定しており、点灯による確認がなく信頼度は低めです。'),
+                         ('腳跟踩 ↓、腳尖踩 ↑ 是高階常見的省力腳法；如果 ←→ 也常只用腳尖或腳跟邊緣踩，代表身體沒有轉過去，容易踩不穩。',
+                          'かかとで ↓、つま先で ↑ を踏むのは上級者によくある省エネの踏み方です。←→ もつま先やかかとの端だけで踏むことが多い場合は、'
+                          '体の向きが追いついておらず、踏みが不安定になりがちです。'))
             lv = _level(off, 'offpanel_pct')
             _adv(A, '踩點', lv, ('踩到非箭頭區', '矢印以外の場所を踏んだ'),
                  (f'{off:.0f}% 的落地整隻腳都沒壓到箭頭板，而是落在角落或踏板外（只踩中央板的不計）。',
@@ -1530,6 +1566,7 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
 
 if __name__ == '__main__':
     import sys
+    sys.stdout.reconfigure(errors='replace')
     r = analyze(sys.argv[1])
     print(json.dumps({'view': r['view'], 'calibration': r['calibration']['points'],
                       'metrics': r['metrics']}, ensure_ascii=False, indent=1))

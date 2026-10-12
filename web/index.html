@@ -54,6 +54,13 @@
       <label><input type="checkbox" data-layer="feet" checked><span data-i18n="layer.feet">落地點</span></label>
       <button id="calibBtn" data-i18n="calib.btn">校正踏板</button>
     </div>
+    <div id="vidOpts" hidden>
+      <span data-i18n="opt.title">這支影片：</span>
+      <label data-i18n-title="opt.lightsTip"><input type="checkbox" id="optLights"><span data-i18n="opt.lights">踏板會亮燈</span></label>
+      <label data-i18n-title="opt.armTip"><input type="checkbox" id="optHideL"><span data-i18n="opt.hideL">左手不在畫面</span></label>
+      <label data-i18n-title="opt.armTip"><input type="checkbox" id="optHideR"><span data-i18n="opt.hideR">右手不在畫面</span></label>
+      <span id="optBusy" class="hint" hidden data-i18n="opt.busy">重新分析中…</span>
+    </div>
     <div id="chartsHead">
       <span data-i18n="charts.title">時間軸</span>
       <label><input type="radio" name="win" value="8" checked><span data-i18n="win.8">前後 4 秒</span></label>

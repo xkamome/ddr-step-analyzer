@@ -47,7 +47,7 @@ function renderList(keep = true) {
 $('#videoSel').onchange = e => openVideo(e.target.value);
 
 async function openVideo(id) {
-  S.id = id; S.A = null; S.calib = null; S.ev = null; setCalibUI(false);
+  S.id = id; S.A = null; S.calib = null; S.ev = null; setCalibUI(false); setOptsUI();
   $('#empty').textContent = t('loading'); $('#empty').hidden = false;
   const r = await fetch(`/api/videos/${id}/analysis`);
   if (!r.ok) { $('#empty').textContent = (await r.json()).detail || t('load.fail'); return; }
@@ -59,8 +59,35 @@ async function openVideo(id) {
 function setAnalysis(A) {
   S.A = A; S.dirty = true; $('#empty').hidden = true;
   buildFootTracks(A);
+  setOptsUI();
   renderAll();
 }
+
+// ───────── 每支影片的設定（踏板亮燈、不在畫面的手）：存在 calib.json，改了就重新分析 ─────────
+function setOptsUI() {
+  const C = S.A && S.A.calibration;
+  $('#vidOpts').hidden = !C;
+  if (!C) return;
+  const arms = C.hidden_arms || [];
+  $('#optLights').checked = C.lights !== false;
+  $('#optHideL').checked = arms.includes('L');
+  $('#optHideR').checked = arms.includes('R');
+}
+async function saveOpts() {
+  const id = S.id, boxes = ['#optLights', '#optHideL', '#optHideR'].map(s => $(s));
+  const body = { lights: $('#optLights').checked,
+    hidden_arms: [['L', '#optHideL'], ['R', '#optHideR']].filter(([, s]) => $(s).checked).map(([k]) => k) };
+  boxes.forEach(b => b.disabled = true); $('#optBusy').hidden = false;
+  try {
+    const r = await fetch(`/api/videos/${id}/options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) { alert(t('opt.fail') + ((await r.json()).detail || r.status)); setOptsUI(); return; }
+    const A = await r.json();
+    if (S.id === id) { S.ev = null; setAnalysis(A); }
+  } finally {
+    boxes.forEach(b => b.disabled = false); $('#optBusy').hidden = true;
+  }
+}
+['#optLights', '#optHideL', '#optHideR'].forEach(s => $(s).onchange = saveOpts);
 
 // ───────── 俯視圖用的腳：固定鞋長、對準施力部位、步與步之間平滑移動 ─────────
 // 分析用的「腳長延伸」是亮燈判定的寬容範圍（會讓腳看起來約 38 cm），畫圖時不用它，
@@ -134,6 +161,7 @@ function renderAll() {
   b.push([v.com_mode === 'trunk' ? t('b.trunk') : t('b.pelvis'), v.com_mode !== 'trunk']);
   const ae = v.arm_est_pct;
   if (ae) for (const sd of ['R', 'L']) if (ae[sd] >= 20) b.push([t('b.armEst', { s: t('foot.' + sd + 'h'), p: Math.round(ae[sd]) }), 1]);
+  if (A.calibration.lights === false) b.push([t('b.noLights'), 1]);
   b.push([t('b.steps', { n: A.metrics.steps, r: A.metrics.steps_per_s ?? '-' })]);
   $('#badges').innerHTML = b.map(([s, hl]) => `<span class="badge${hl ? ' hl' : ''}">${esc(s)}</span>`).join('');
   renderAdvice(); renderEvents(); renderSteps(); renderMetrics(); renderEvSel(); updPadRotBtn(); redraw();
@@ -752,8 +780,10 @@ function renderSteps() {
       ${C.foot_ext ? `<tr><td>${t('s.footExt')}</td><td>${Math.round(C.foot_ext[0] * 100)}% / ${Math.round(C.foot_ext[1] * 100)}%</td></tr>` : ''}
       ${C.fit ? `<tr><td>${t('s.fit')}</td><td>${C.fit[0]}% → ${C.fit[1]}%</td></tr>` : ''}
     </table>`;
-    if (M.press_part) html += '<table>' + Object.entries(M.press_part).map(([k, v]) =>
-      `<tr><td>${t('s.partOf', { a: k })}</td><td>${Object.entries(v).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(tv(p))} ${n}`).join('・')}</td></tr>`).join('') + '</table>';
+  } else if (M.press_part) html += `<h2>${t('s.partTitle')}</h2>`;   // 踏板不亮燈：部位只靠骨架
+  if (M.press_part) html += '<table>' + Object.entries(M.press_part).map(([k, v]) =>
+    `<tr><td>${t('s.partOf', { a: k })}</td><td>${Object.entries(v).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(tv(p))} ${n}`).join('・')}</td></tr>`).join('') + '</table>';
+  if (M.lit_steps) {
     if (M.lit_mismatch && Object.keys(M.lit_mismatch).length) html += '<table>' + Object.entries(M.lit_mismatch).map(([k, v]) => {
       const m = k.match(/^亮 (\S+)／骨架 (.+)$/);
       return `<tr><td>${m ? t('s.mm', { a: m[1], b: esc(tv(m[2])) }) : esc(k)}</td><td>${v}${t('u.times')}</td></tr>`;

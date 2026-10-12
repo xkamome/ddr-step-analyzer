@@ -41,6 +41,8 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 12px; pa
 .kL { color: var(--aL); } .kD { color: var(--aD); } .kU { color: var(--aU); } .kR { color: var(--aR); }
 
 #controls { display: flex; align-items: center; gap: 8px; padding: 8px 0; flex-wrap: wrap; }
+#vidOpts { display: flex; align-items: center; gap: 12px; padding: 0 0 8px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+#vidOpts[hidden] { display: none; }
 #seek { flex: 1; min-width: 160px; }
 #timeLbl { font-variant-numeric: tabular-nums; min-width: 84px; color: var(--muted); }
 #chartsHead { display: flex; gap: 12px; align-items: center; color: var(--muted); font-size: 13px; padding-bottom: 4px; }

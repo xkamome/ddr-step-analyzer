@@ -109,8 +109,27 @@ def _status(d: Path) -> dict:
         job.setdefault('name', Path(meta['source']).name)
         job['duration'] = meta.get('duration')
     job['id'] = d.name
-    job['manual'] = (d / 'calib.json').exists()
+    job['manual'] = 'points' in _read_calib(d)
     return job
+
+
+OPT_KEYS = ('lights', 'hidden_arms')     # calib.json 裡與板位無關的每支影片設定（重設校正時保留）
+
+
+def _read_calib(d: Path) -> dict:
+    f = d / 'calib.json'
+    return json.loads(f.read_text(encoding='utf-8')) if f.exists() else {}
+
+
+def _write_calib(d: Path, cal: dict):
+    if cal:
+        (d / 'calib.json').write_text(json.dumps(cal), encoding='utf-8')
+    else:
+        (d / 'calib.json').unlink(missing_ok=True)
+
+
+def _opts_only(d: Path) -> dict:
+    return {k: v for k, v in _read_calib(d).items() if k in OPT_KEYS}
 
 
 # ───────────── API ─────────────
@@ -123,6 +142,11 @@ class AddReq(BaseModel):
 class CalibReq(BaseModel):
     points: dict[str, list[float]]
     foot_offset: list[float] | None = None     # 手動的腳位置偏移（踏板座標，格）
+
+
+class OptsReq(BaseModel):
+    lights: bool = True                        # 踏板會亮燈
+    hidden_arms: list[str] = []                # 不在畫面裡的手：'L' / 'R'
 
 
 @app.get('/api/videos')
@@ -173,10 +197,10 @@ def set_calibration(vid: str, req: CalibReq):
     d = _vdir(vid)
     if set(req.points) != set('LDUR') or any(len(v) != 2 for v in req.points.values()):
         raise HTTPException(400, 'L/D/U/R の 4 点が必要です／需要 L/D/U/R 四個點')
-    cal = {'points': req.points}
+    cal = {**_opts_only(d), 'points': req.points}
     if req.foot_offset and len(req.foot_offset) == 2:
         cal['foot_offset'] = req.foot_offset
-    (d / 'calib.json').write_text(json.dumps(cal), encoding='utf-8')
+    _write_calib(d, cal)
     A.analyze(d)
     return FileResponse(d / 'analysis.json', media_type='application/json')
 
@@ -184,7 +208,21 @@ def set_calibration(vid: str, req: CalibReq):
 @app.delete('/api/videos/{vid}/calibration')
 def reset_calibration(vid: str):
     d = _vdir(vid)
-    (d / 'calib.json').unlink(missing_ok=True)
+    _write_calib(d, _opts_only(d))
+    A.analyze(d)
+    return FileResponse(d / 'analysis.json', media_type='application/json')
+
+
+@app.post('/api/videos/{vid}/options')
+def set_options(vid: str, req: OptsReq):
+    d = _vdir(vid)
+    cal = {k: v for k, v in _read_calib(d).items() if k not in OPT_KEYS}
+    if not req.lights:
+        cal['lights'] = False
+    arms = sorted({s for s in req.hidden_arms if s in ('L', 'R')})
+    if arms:
+        cal['hidden_arms'] = arms
+    _write_calib(d, cal)
     A.analyze(d)
     return FileResponse(d / 'analysis.json', media_type='application/json')
 
