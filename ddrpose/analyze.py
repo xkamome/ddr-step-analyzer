@@ -18,6 +18,7 @@ PANEL_CM = 28        # 街機單人踏板約 85 cm 見方 → 一格約 28 cm（
 SHANK_CM = 38        # 換算抬腳高度用的小腿長假設（估）
 FOOT_CM = 25         # 腳跟到腳尖長度假設（估），換算腳跟離地高度用
 HEEL_UP_CM = 2.5     # 腳跟離地超過此高度視為「踮腳（前腳掌著地）」
+LIGHTS_MIN_PER_MIN = 20   # 亮燈起點每分鐘少於此數 → 視為沒有可用的亮燈，改用學習式落地判定
 
 LEG = {'L': dict(hip=11, knee=13, ankle=15, bt=20, st=22, heel=24),
        'R': dict(hip=12, knee=14, ankle=16, bt=21, st=23, heel=25)}
@@ -204,6 +205,22 @@ def _vert_dir(p, vp):
         d = vp[:2] / vp[2] - p
     d = d / (np.linalg.norm(d) + 1e-9)
     return d if d[1] > 0 else -d
+
+
+def _body_vertical(X, rel, min_frames=30):
+    """身體平均軸線（肩中點 → 腳踝中點）當作影像中的垂直方向，回傳無窮遠消失點 [dx, dy, 0]。
+    重心離地約 1 公尺，手機只要微傾幾度，沿畫面垂直線投到地面就會橫向偏 5–15 cm；
+    身體軸線不受相機傾斜影響（實驗：雙腳靜止時重心落在兩腳之間的比例 55% → 93%）。"""
+    ok = rel[:, 5] & rel[:, 6] & rel[:, 15] & rel[:, 16]
+    if ok.sum() < min_frames:
+        return None
+    v = (X[ok, 15] + X[ok, 16]) / 2 - (X[ok, 5] + X[ok, 6]) / 2
+    v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+    d = np.median(v, 0)
+    if not np.isfinite(d).all() or np.linalg.norm(d) < 0.5:
+        return None
+    d = d / np.linalg.norm(d)
+    return np.array([d[0], d[1], 0.0])
 
 
 # ───────────────────────── 落地偵測 ─────────────────────────
@@ -629,6 +646,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
     # 不用亮燈找板位、也不以亮燈修正板位；hidden_arms → 不在畫面裡的手（骨架點是模型猜的）
     use_lights = (calib or {}).get('lights', True) is not False
     hidden_arms = {s for s in (calib or {}).get('hidden_arms', []) if s in LEG}
+    K_raw, S_raw, valid_raw = K.copy(), S.copy(), valid.copy()   # 學習式落地判定用（和訓練時同樣的輸入）
 
     if _swap_all:
         K, S = _swap_legs(K, S, np.ones(len(K), bool))
@@ -714,6 +732,9 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
             view = {'mode': 'homography'} if pts else {'mode': 'none'}
 
     vp = _load_vertical(vid_dir, Mot, meta)
+    vp_com = _body_vertical(X, rel)
+    if vp_com is None:
+        vp_com = vp
 
     # 腳跟離地：估計高度，並把腳跟的投影從「遠處」拉回它正下方的地面
     HL = heel_lift_series(X, S, shank, planted)
@@ -772,7 +793,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
         # 單一鏡頭只能量到重心在「畫面水平方向」的位置；沿畫面垂直線移動（深度）量不到。
         # 在踏板中心附近，把畫面垂直方向換到踏板座標，得到量不到的方向 w，可觀測軸 = w 的垂直方向。
         c_img = _apply_h(np.linalg.inv(H), [[0.0, 0.0]])[0]
-        dv = _vert_dir(c_img, vp)
+        dv = _vert_dir(c_img, vp_com)
         w = _apply_h(H, [c_img + dv * 20])[0] - _apply_h(H, [c_img])[0]
         w = w / (np.linalg.norm(w) + 1e-9)
         com_axis = np.array([w[1], -w[0]])
@@ -859,6 +880,45 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
     #    （骨架的腳跟點通常比鞋跟內縮，用腳跟踩 ↓ 會判不到），自動校正時也微調九宮格；
     # 3) 以亮燈為準修正每步的板位，並補回「有亮燈、骨架卻沒偵測到落地」的步。
     lights, fit_info, n_light_only = None, None, 0
+
+    def nearest_foot(fi, k, sym):
+        """幀 fi 時離箭頭板 k 最近的腳 → (距離, 腳, 腳跟／腳尖踏板座標)；都算不出來回傳 None。"""
+        best = None
+        for side_ in LEG:
+            h_ = heel_info(side_, fi, fi + 3, sym)[0]
+            hl = drop(heel_ground(side_, fi, h_), side_, fi, sole_h)
+            tp = drop(toe[side_][fi], side_, fi, sole_h)
+            if np.isnan(hl).any() or np.isnan(tp).any():
+                continue
+            q = to_pad(_warp(Mot[[fi, fi]], np.array([hl, tp]))) + foot_off
+            foot = _foot_samples(q[0], q[1], *foot_ext)
+            cx, cy = ARROWS[k]
+            d = float(np.min(np.maximum(np.abs(foot[:, 0] - cx), np.abs(foot[:, 1] - cy))))
+            if best is None or d < best[0]:
+                best = (d, side_, q)
+        return best
+
+    def onset_step(fi, k, sym, side_, q, off, **flags):
+        h_, yaw_ok, agree, pm_, am_ = heel_info(side_, fi, fi + 3, sym)
+        hup = bool(np.isfinite(h_) and h_ > HEEL_UP_CM)
+        st = dict(t=_r(t[fi]), frame=int(fi), end=int(off), foot=side_, dur=_r(t[off] - t[fi]),
+                  img=[_r(v, 1) for v in (g[side_][fi] if np.isfinite(g[side_][fi]).all() else heel[side_][fi])],
+                  heel_pad=[_r(q[0][0]), _r(q[0][1])], toe_pad=[_r(q[1][0]), _r(q[1][1])],
+                  **flags, pose_panel=None,
+                  heel_lift=_r(h_, 1), heel_up=hup, _yaw_ok=yaw_ok, _agree=agree, _pitch=pm_, _ank=am_)
+        st.update(classify_foot(q[0], q[1], *foot_ext, target=sym, heel_up=hup))
+        return st
+
+    def trim_overlap():
+        steps.sort(key=lambda st: st['frame'])
+        # 同一隻腳的步不重疊：結束幀截到下一步開始前
+        for side_ in LEG:
+            ss = [st for st in steps if st['foot'] == side_]
+            for a_, b_ in zip(ss[:-1], ss[1:]):
+                if a_['end'] >= b_['frame']:
+                    a_['end'] = max(a_['frame'], b_['frame'] - 1)
+                    a_['dur'] = _r(t[a_['end']] - t[a_['frame']])
+
     if use_lights and view['mode'] == 'homography' and (vid_dir / 'preview.mp4').exists():
         from .glow import glow_map, lit_at_step, light_onsets, panel_lights
         Fg, gs, Fr_glow = glow_map(vid_dir, Mot, meta['width'], play)
@@ -898,34 +958,14 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
             sym = ARROW_SYM[k]
             if any(st.get('lit') == sym and abs(st['frame'] - fi) <= 6 for st in steps):
                 continue
-            best = None
-            for side_ in LEG:
-                h_ = heel_info(side_, fi, fi + 3, sym)[0]
-                hl = drop(heel_ground(side_, fi, h_), side_, fi, sole_h)
-                tp = drop(toe[side_][fi], side_, fi, sole_h)
-                if np.isnan(hl).any() or np.isnan(tp).any():
-                    continue
-                q = to_pad(_warp(Mot[[fi, fi]], np.array([hl, tp]))) + foot_off
-                foot = _foot_samples(q[0], q[1], *foot_ext)
-                cx, cy = ARROWS[k]
-                d = float(np.min(np.maximum(np.abs(foot[:, 0] - cx), np.abs(foot[:, 1] - cy))))
-                if best is None or d < best[0]:
-                    best = (d, side_, q)
+            best = nearest_foot(fi, k, sym)
             if best is None or best[0] > 1.0:
                 continue
             _, side_, q = best
-            h_, yaw_ok, agree, pm_, am_ = heel_info(side_, fi, fi + 3, sym)
-            hup = bool(np.isfinite(h_) and h_ > HEEL_UP_CM)
             off = fi
             while off + 1 < n and lights[k][off + 1] > 0.2:
                 off += 1
-            st = dict(t=_r(t[fi]), frame=int(fi), end=int(off), foot=side_, dur=_r(t[off] - t[fi]),
-                      img=[_r(v, 1) for v in (g[side_][fi] if np.isfinite(g[side_][fi]).all() else heel[side_][fi])],
-                      heel_pad=[_r(q[0][0]), _r(q[0][1])], toe_pad=[_r(q[1][0]), _r(q[1][1])],
-                      lit=sym, pose_panel=None, from_light=True,
-                      heel_lift=_r(h_, 1), heel_up=hup, _yaw_ok=yaw_ok, _agree=agree, _pitch=pm_, _ank=am_)
-            st.update(classify_foot(q[0], q[1], *foot_ext, target=sym, heel_up=hup))
-            steps.append(st)
+            steps.append(onset_step(fi, k, sym, side_, q, off, lit=sym, from_light=True))
             n_light_only += 1
         if stage == 0 and len(lit_idx) >= 20:  # (亮燈補步之後才算，樣本較多)
             # 每隻腳、每塊（亮燈）板各自的「踩平」基準：該組落地傾角的 20 百分位
@@ -940,14 +980,39 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
                     '_contact_panel': {f"{st['foot']}:{st['frame']}": st['lit'] for st in steps
                                        if st.get('lit') and not st.get('from_light')}}
             return analyze(vid_dir, cal1, _swap_all=_swap_all)
-        steps.sort(key=lambda st: st['frame'])
-        # 同一隻腳的步不重疊：結束幀截到下一步開始前
-        for side_ in LEG:
-            ss = [st for st in steps if st['foot'] == side_]
-            for a_, b_ in zip(ss[:-1], ss[1:]):
-                if a_['end'] >= b_['frame']:
-                    a_['end'] = max(a_['frame'], b_['frame'] - 1)
-                    a_['dur'] = _r(t[a_['end']] - t[a_['frame']])
+        trim_overlap()
+
+    # ── 沒有亮燈可用（設定不亮燈，或亮燈幾乎抓不到起點，例：白色邊框燈的金框體）──
+    # 以亮燈當標籤訓練的學習模型（contact.py）找「踩下去的瞬間」，補回骨架速度門檻漏掉的步。
+    # 實驗（依遊玩分組的留一支法＝模擬沒燈）：純骨架 F1 0.19 → 學習模型 0.59。
+    n_model_only = 0
+    if lights is not None:
+        from .glow import light_onsets
+        n_lit_on = len(light_onsets(lights))
+    else:
+        n_lit_on = 0
+    if (view['mode'] == 'homography' and to_pad is not None
+            and n_lit_on < LIGHTS_MIN_PER_MIN * play.sum() / fps / 60):
+        from .contact import detect_presses
+        try:
+            ev, _ = detect_presses(K_raw, S_raw, valid_raw, Mot, mot_ok, {k: pts[k] for k in 'LDUR'}, fps)
+        except ValueError:
+            ev = None
+        for fi, k in ev or []:
+            sym = ARROW_SYM[k]
+            if any(st.get('panel') == sym and abs(st['frame'] - fi) <= 6 for st in steps):
+                continue
+            best = nearest_foot(fi, k, sym)
+            if best is None or best[0] > 1.0:
+                continue
+            _, side_, q = best
+            off, lim = fi, min(n, fi + int(1.5 * fps))
+            while off + 1 < lim and planted[side_][off + 1]:
+                off += 1
+            steps.append(onset_step(fi, k, sym, side_, q, off, lit=None, pred=sym, from_model=True))
+            n_model_only += 1
+        if n_model_only:
+            trim_overlap()
 
     for st in steps:
         if st.pop('heel_conflict', False):
@@ -977,8 +1042,8 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
     # 重心的地面深度基準用「扣掉鞋底高度」後的腳，才會和俯視圖上的腳一致
     gL = np.array([drop(g['L'][i_], 'L', i_, sole_h) for i_ in range(n)]).reshape(-1, 2)
     gR = np.array([drop(g['R'][i_], 'R', i_, sole_h) for i_ in range(n)]).reshape(-1, 2)
-    com_g = ground_at_feet_depth(com, gL, gR, vp)
-    hip_g = ground_under(hip, gL, gR, vp, S_mean)
+    com_g = ground_at_feet_depth(com, gL, gR, vp_com)
+    hip_g = ground_under(hip, gL, gR, vp_com, S_mean)
     hip_h = np.linalg.norm(hip - hip_g, axis=1) / S_mean
     com_pad = np.full((n, 2), np.nan)
     foot_pad = {s: np.full((n, 2), np.nan) for s in LEG}
@@ -1065,7 +1130,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
                         'points': {k: [_r(v[0], 1), _r(v[1], 1)] for k, v in pts.items()} if pts else None,
                         'grid': grid, 'foot_ext': list(foot_ext), 'fit': fit_info,
                         'sole_h': _r(sole_h, 1), 'foot_offset': [_r(foot_off[0]), _r(foot_off[1])],
-                        'light_only_steps': n_light_only,
+                        'light_only_steps': n_light_only, 'model_only_steps': n_model_only,
                         'lights': use_lights, 'hidden_arms': sorted(hidden_arms)},
         'frames': {
             't': [_r(v) for v in t],
