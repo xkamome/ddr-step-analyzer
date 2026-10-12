@@ -996,7 +996,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
         from .contact import detect_presses
         try:
             ev, _ = detect_presses(K_raw, S_raw, valid_raw, Mot, mot_ok, {k: pts[k] for k in 'LDUR'}, fps)
-        except ValueError:
+        except Exception:   # 模型是加分項：任何失敗都退回純骨架的結果，不讓整個分析失敗
             ev = None
         for fi, k in ev or []:
             sym = ARROW_SYM[k]
