@@ -983,8 +983,9 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
         trim_overlap()
 
     # ── 沒有亮燈可用（設定不亮燈，或亮燈幾乎抓不到起點，例：白色邊框燈的金框體）──
-    # 以亮燈當標籤訓練的學習模型（contact.py）找「踩下去的瞬間」，補回骨架速度門檻漏掉的步。
-    # 實驗（依遊玩分組的留一支法＝模擬沒燈）：純骨架 F1 0.19 → 學習模型 0.59。
+    # 以亮燈當標籤訓練的學習模型（contact.py）找「踩下去的瞬間」，箭頭板的步改以模型為準。
+    # 實驗（依遊玩分組的留一支法＝模擬沒燈，完整 analyze 流程）：純骨架 F1 0.19；
+    # 骨架步＋模型補漏 0.52（骨架步精確率低，且離腳 >1 格的模型步被丟掉）；只用模型的步 0.59。
     n_model_only = 0
     if lights is not None:
         from .glow import light_onsets
@@ -998,20 +999,25 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
             ev, _ = detect_presses(K_raw, S_raw, valid_raw, Mot, mot_ok, {k: pts[k] for k in 'LDUR'}, fps)
         except Exception:   # 模型是加分項：任何失敗都退回純骨架的結果，不讓整個分析失敗
             ev = None
+        added = []
         for fi, k in ev or []:
             sym = ARROW_SYM[k]
-            if any(st.get('panel') == sym and abs(st['frame'] - fi) <= 6 for st in steps):
-                continue
-            best = nearest_foot(fi, k, sym)
-            if best is None or best[0] > 1.0:
+            # 腳位置（沒有亮燈校正）常偏離實際踩的板，所以不以距離過濾；該幀算不出腳位置才往後找
+            best = next((b for b in (nearest_foot(f_, k, sym) for f_ in range(fi, min(n, fi + 4)))
+                         if b is not None), None)
+            if best is None:
                 continue
             _, side_, q = best
             off, lim = fi, min(n, fi + int(1.5 * fps))
             while off + 1 < lim and planted[side_][off + 1]:
                 off += 1
-            steps.append(onset_step(fi, k, sym, side_, q, off, lit=None, pred=sym, from_model=True))
-            n_model_only += 1
-        if n_model_only:
+            added.append(onset_step(fi, k, sym, side_, q, off, lit=None, pred=sym, from_model=True))
+        if added:
+            # 骨架的箭頭板步全部換成模型的步；中央／板外等非箭頭步，同一隻腳附近沒有模型步才保留
+            arrows = set(ARROW_SYM.values())
+            steps[:] = [st for st in steps if st.get('panel') not in arrows and not any(
+                a_['foot'] == st['foot'] and abs(a_['frame'] - st['frame']) <= 6 for a_ in added)] + added
+            n_model_only = len(added)
             trim_overlap()
 
     for st in steps:
