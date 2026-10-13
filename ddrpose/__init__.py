@@ -1,2 +1,2 @@
 """DDR ステップ解析（DDR Step Analyzer）。"""
-__version__ = '1.4'
+__version__ = '1.5'

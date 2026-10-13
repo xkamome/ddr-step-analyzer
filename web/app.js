@@ -162,6 +162,7 @@ function renderAll() {
   const ae = v.arm_est_pct;
   if (ae) for (const sd of ['R', 'L']) if (ae[sd] >= 20) b.push([t('b.armEst', { s: t('foot.' + sd + 'h'), p: Math.round(ae[sd]) }), 1]);
   if (A.calibration.lights === false) b.push([t('b.noLights'), 1]);
+  else if (A.calibration.model_only_steps > 0) b.push([t('b.modelSteps', { n: A.calibration.model_only_steps }), 1]);
   b.push([t('b.steps', { n: A.metrics.steps, r: A.metrics.steps_per_s ?? '-' })]);
   $('#badges').innerHTML = b.map(([s, hl]) => `<span class="badge${hl ? ' hl' : ''}">${esc(s)}</span>`).join('');
   renderAdvice(); renderEvents(); renderSteps(); renderMetrics(); renderEvSel(); updPadRotBtn(); redraw();

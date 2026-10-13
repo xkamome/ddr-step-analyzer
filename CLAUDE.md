@@ -15,7 +15,9 @@
 | `ddrpose/stabilize.py` | 鏡頭移動補償：**原則固定**，每 2.5 秒關鍵幀、位移 >3% 且下一關鍵幀確認才換段（分段常數，`motion.npz` 含 `ok`／`seg`／`ver`）；逐幀補償會讓九宮格抖 |
 | `ddrpose/glow.py` | 踏板亮燈：累積圖→找四個箭頭板、逐幀亮燈、落地時亮起的板 |
 | `ddrpose/analyze.py` | 主分析（三階段，見下）、重心分段模型、指標與**雙語建議**（`_adv(..., (zh, ja))`） |
+| `ddrpose/contact.py` | 沒燈時的落地判定：特徵、numpy 版 GBDT 推論、取峰值；模型 `ddrpose/models/contact_gbdt.npz`（由 `experiments/learn_contact.py`＋`export_gbdt.py` 產生） |
 | `ddrpose/events.py` | 重心大幅移動事件與三步配置統計 |
+| `experiments/` | 精準度實驗（實驗 venv `%LOCALAPPDATA%\ddr-pose\venv-exp`，`experiments/py.sh`）；報告 `experiments/REPORT.md`；影片清單 `videos.local.json` 不進 git |
 | `server.py` | FastAPI、工作佇列、校正 API、心跳自動關閉 |
 | `web/i18n.js` | **所有介面文字**（zh / ja）；後端短標籤的翻譯在 `VAL` |
 | `web/app.js` | 介面（疊圖、俯視圖、時間軸、校正編輯、事件） |
@@ -28,6 +30,9 @@
 - **非遊玩段不分析**（`_play_mask`）：沒抓到人、鏡頭對不上參考幀、雙腳離常站位置 >1.5 腿長的幀排除（例：拿手機拍結算畫面）；亮燈圖也只累積遊玩幀。
 - 下一階段沿用上一階段的自動板位（`_source` 為 auto-glow／auto-feet 時用 `calib['points']`）。
 - 以**踏板亮燈為標準答案**：步數與板位以亮燈為準，骨架判斷用哪個部位踩。
+- **沒有亮燈可用**（`lights: false`，或亮燈起點每分鐘 < `LIGHTS_MIN_PER_MIN`）：箭頭板的步全部換成學習模型的步（`from_model`）；不要改回「骨架步＋模型補漏」（端到端留一支法 0.52 vs 0.59）。模型失敗時退回純骨架。
+- 重心投影的垂直方向用身體軸線（`_body_vertical`），不用畫面垂直線。
+- 想提升沒燈準確度：加更多「不同遊玩」的有燈影片重新訓練（學習曲線：遊玩次數還在進步，同一遊玩拉長不會）。
 - 座標：踏板座標 x 往右、y 往後（↓），箭頭在 ±1；影像座標分「目前幀」與「參考幀」（`frames.M` 轉換），預覽檔解析度 ≠ 原始解析度。
 
 ## Windows 上的坑（都踩過）
