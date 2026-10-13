@@ -1,11 +1,12 @@
 # ddr-step-analyzer（DDR ステップ解析）— Claude Code 約定
 
-用骨架（RTMPose Halpe26）分析 DDR 遊玩影片的踩點、重心、腳尖／腳跟，給出修正建議。本機 Python 後端＋瀏覽器介面，不用任何雲端 API。使用說明見 `README.md`（日文，GitHub 首頁）、`README.zh-TW.md`（中文）與 `はじめにお読みください.txt`（給日文使用者）。
+用骨架（RTMPose Halpe26）分析 DDR 遊玩影片的踩點、重心、腳尖／腳跟，給出修正建議。本機 Python 後端＋瀏覽器介面，不用任何雲端 API。使用說明見 `README.md`（日文，GitHub 首頁）、`README.zh-TW.md`（中文）、`README.en.md`（英文，截圖在 `docs/images/en/`）、`はじめにお読みください.txt`（給日文使用者）與 `README_FIRST.txt`（給英文使用者）。
 
 ## 使用者與偏好
 - 使用者是高階 DDR 玩家（15 級以上），也會把工具交給**不懂電腦的日文使用者**（Windows）。
 - **只分析看得到踏板的影片**；貼地側拍（看不到踏板）不要分析（舊資料在 `data/_archive/`）。
-- 介面**預設日文**，可切中文；修正建議也是中日雙語。
+- 介面日文／中文／英文：第一次依瀏覽器語言自動選（英→en、中→zh、其他→**日文**），之後記住使用者的選擇；修正建議也是三語。
+- 英文用 **B1 程度＋DDR 術語**（panel、arrow、crossover、doublestep、stream、bar、chart）；重心一律譯作 **balance point**。
 - 分析結果要標信心：單一斜角鏡頭只量得到重心在畫面水平方向的分量，畫面外的手是推估。
 
 ## 檔案與 source of truth
@@ -14,12 +15,12 @@
 | `ddrpose/pose.py` | 姿勢擷取（YOLOX＋RTMPose-x）、預覽轉檔、ffmpeg 定位、`--download-models` |
 | `ddrpose/stabilize.py` | 鏡頭移動補償：**原則固定**，每 2.5 秒關鍵幀、位移 >3% 且下一關鍵幀確認才換段（分段常數，`motion.npz` 含 `ok`／`seg`／`ver`）；逐幀補償會讓九宮格抖 |
 | `ddrpose/glow.py` | 踏板亮燈：累積圖→找四個箭頭板、逐幀亮燈、落地時亮起的板 |
-| `ddrpose/analyze.py` | 主分析（三階段，見下）、重心分段模型、指標與**雙語建議**（`_adv(..., (zh, ja))`） |
+| `ddrpose/analyze.py` | 主分析（三階段，見下）、重心分段模型、指標與**三語建議**（`_adv(..., (zh, ja, en))`；短標籤英文在 `EN`） |
 | `ddrpose/contact.py` | 沒燈時的落地判定：特徵、numpy 版 GBDT 推論、取峰值；模型 `ddrpose/models/contact_gbdt.npz`（由 `experiments/learn_contact.py`＋`export_gbdt.py` 產生） |
 | `ddrpose/events.py` | 重心大幅移動事件與三步配置統計 |
 | `experiments/` | 精準度實驗（實驗 venv `%LOCALAPPDATA%\ddr-pose\venv-exp`，`experiments/py.sh`）；報告 `experiments/REPORT.md`；影片清單 `videos.local.json` 不進 git |
-| `server.py` | FastAPI、工作佇列、校正 API、心跳自動關閉 |
-| `web/i18n.js` | **所有介面文字**（zh / ja）；後端短標籤的翻譯在 `VAL` |
+| `server.py` | FastAPI、工作佇列、校正 API、心跳自動關閉；錯誤訊息 `_msg(ja, zh, en)`（介面用 `L()` 依語言顯示）；`analysis.json` 開頭的 `langs` 少了語言就自動重新分析 |
+| `web/i18n.js` | **所有介面文字**（zh / ja / en）；後端短標籤的翻譯在 `VAL`；標點用 `paren`／`p.sep`／`p.colon`（中日全形、英文半形） |
 | `web/app.js` | 介面（疊圖、俯視圖、時間軸、校正編輯、事件） |
 | `tools/setup.ps1` | 給使用者的一鍵安裝（自動裝 Python 3.12、venv、模型） |
 | `tools/make_package.py` | 打包 `dist/ddr-step-analyzer_*.zip`（發佈到 GitHub Releases） |
@@ -45,9 +46,9 @@
 ## 開發約定
 - 改後端要**重啟伺服器**（模組不會重載）；改分析邏輯後重跑 `python -m ddrpose.analyze data/<id>`。
 - 開發時用 `python server.py --no-auto-exit`（否則關掉分頁 10 秒後伺服器自動結束）。
-- 介面文字一律加到 `web/i18n.js` 的 zh 和 ja；建議文字在 `analyze.py` 同時寫中日文。
+- 介面文字一律加到 `web/i18n.js` 的 zh、ja、en；建議文字在 `analyze.py` 同時寫中日英（加新語言時同步改 `LANGS`，舊結果會自動重新分析）。
 - 版本在 `ddrpose/__init__.py` 的 `__version__`；發佈：改版本 → `make_package.bat` → GitHub Release（帳號 xkamome）。
-- 改完要給別人用：`make_package.bat`，並同步更新 `はじめにお読みください.txt`。
+- 改完要給別人用：`make_package.bat`，並同步更新 `はじめにお読みください.txt` 與 `README_FIRST.txt`。
 - `data/`（影片、分析結果）是個人資料，不進 git；也不要未經同意改使用者影片的 `calib.json`。
 
 ## 待辦／想法

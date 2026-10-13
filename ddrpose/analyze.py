@@ -1123,6 +1123,7 @@ def analyze(vid_dir: str | Path, calib: dict | None = None, _swap_all: bool = Fa
 
     grid = _grid_lines(pts, view) if pts is not None else []
     result = {
+        'langs': list(LANGS),                    # 放第一個：伺服器只讀檔頭就能判斷是否缺語言
         'id': vid_dir.name, 'meta': meta, 'fps': _r(fps, 2),
         'view': {**view, 'com_axis': [_r(v) for v in com_axis] if com_axis is not None else None,
                  'com_axis_names': axis_info,
@@ -1263,25 +1264,34 @@ CAUSE_TXT = {
            'bar_release': '手離開扶桿', 'fast': '比平常密集'},
     'ja': {'crossover': 'クロス（交差）', 'jump': 'ジャンプ', 'same_foot': '同じ足で連続', 'wide': '大きな踏み替え',
            'bar_release': 'バーから手を離した', 'fast': '普段より高密度'},
+    'en': {'crossover': 'crossover', 'jump': 'jump', 'same_foot': 'doublestep', 'wide': 'wide move',
+           'bar_release': 'hand off the bar', 'fast': 'denser than usual'},
 }
-# 後端短標籤的日文（方向、腳的部位）；中文即原字串
+LANGS = ('zh', 'ja', 'en')      # analysis.json 的建議語言；少了某語言的舊檔，伺服器會重新分析
+# 後端短標籤的日文／英文（方向、腳的部位）；中文即原字串
 JA = {'左右': '左右', '前後': '前後', '斜向（↖↘）': '斜め（↖↘）', '斜向（↗↙）': '斜め（↗↙）',
       '右': '右', '左': '左', '後': '後ろ', '前': '前',
       '右後（→↓ 之間）': '右後ろ（→↓ の間）', '左前（←↑ 之間）': '左前（←↑ の間）',
       '右前（→↑ 之間）': '右前（→↑ の間）', '左後（←↓ 之間）': '左後ろ（←↓ の間）',
       '腳尖': 'つま先', '腳跟': 'かかと', '全腳': '足裏全体', '腳掌中段': '土踏まず付近', '未碰到': '未接触'}
+EN = {'左右': 'left–right', '前後': 'front–back', '斜向（↖↘）': 'diagonal (↖↘)', '斜向（↗↙）': 'diagonal (↗↙)',
+      '右': 'right', '左': 'left', '後': 'back', '前': 'front',
+      '右後（→↓ 之間）': 'back-right (between → and ↓)', '左前（←↑ 之間）': 'front-left (between ← and ↑)',
+      '右前（→↑ 之間）': 'front-right (between → and ↑)', '左後（←↓ 之間）': 'back-left (between ← and ↓)',
+      '腳尖': 'toe', '腳跟': 'heel', '全腳': 'whole foot', '腳掌中段': 'mid-foot', '未碰到': 'no contact'}
 ja = lambda s: JA.get(s, s)
+en = lambda s: EN.get(s, s)
 
 
 def _adv(A, area, level, title, evidence, fix):
-    """一則建議；title / evidence / fix 皆為 (中文, 日文)。area 為中文代碼，介面負責翻譯。"""
-    A.append(dict(area=area, level=level, title=dict(zh=title[0], ja=title[1]),
-                  evidence=dict(zh=evidence[0], ja=evidence[1]), fix=dict(zh=fix[0], ja=fix[1])))
+    """一則建議；title / evidence / fix 皆為 (中文, 日文, 英文)。area 為中文代碼，介面負責翻譯。"""
+    A.append(dict(area=area, level=level, title=dict(zip(LANGS, title)),
+                  evidence=dict(zip(LANGS, evidence)), fix=dict(zip(LANGS, fix))))
 
 
 def _part_summary(parts):
-    """{箭頭: {部位: 步數}} → 每個箭頭一句（前兩名部位），(中文列表, 日文列表)。"""
-    dz, dj = [], []
+    """{箭頭: {部位: 步數}} → 每個箭頭一句（前兩名部位），(中文列表, 日文列表, 英文列表)。"""
+    dz, dj, de = [], [], []
     for arrow in ('←', '↓', '↑', '→'):
         pp = parts.get(arrow)
         if pp:
@@ -1289,11 +1299,14 @@ def _part_summary(parts):
             top = sorted(pp.items(), key=lambda kv: -kv[1])[:2]
             dz.append(f"{arrow} {tot} 步（" + '、'.join(f'{k} {v}' for k, v in top) + '）')
             dj.append(f"{arrow} {tot} 歩（" + '・'.join(f'{ja(k)} {v}' for k, v in top) + '）')
-    return dz, dj
+            de.append(f"{arrow} {tot} steps (" + ', '.join(f'{en(k)} {v}' for k, v in top) + ')')
+    return dz, dj, de
 
 
 AUTO_NOTE = ('（這是用腳印分群做的自動校正：落點是和自己的平均落點比，不是和實際箭頭中心比；要看絕對偏移請手動校正）',
-             '（足跡クラスタによる自動補正のため、ずれは自分の平均着地点との比較です。矢印の中心からの絶対的なずれを見るには手動補正してください）')
+             '（足跡クラスタによる自動補正のため、ずれは自分の平均着地点との比較です。矢印の中心からの絶対的なずれを見るには手動補正してください）',
+             ' (This is an automatic calibration from your footprints, so landings are compared with your own average '
+             'landing spot, not with the real arrow centers. To see the real offset, calibrate the pad by hand.)')
 
 
 def _heel_and_event_advice(M, A, steps, events, ev_stats, axis):
@@ -1313,34 +1326,46 @@ def _heel_and_event_advice(M, A, steps, events, ev_stats, axis):
         txt = ' '.join(f"{k} {v['pct']:.0f}%" for k, v in M['heel_up_by_arrow'].items())
         p = M['heel_up_pct']
         _adv(A, '踩點', 'info',
-             ('腳跟離地（踮腳踩）比例', 'かかとが浮いている割合（前足部で踏む）'),
+             ('腳跟離地（踮腳踩）比例', 'かかとが浮いている割合（前足部で踏む）', 'Heel up (stepping with the front of the foot)'),
              (f'可信的 {len(conf)} 步中，{p:.0f}% 落地時腳跟離地超過 {HEEL_UP_CM} cm；各箭頭：{txt}。',
-              f'信頼できる {len(conf)} 歩のうち {p:.0f}% は、着地時にかかとが {HEEL_UP_CM} cm 以上浮いていました。矢印別：{txt}。'),
+              f'信頼できる {len(conf)} 歩のうち {p:.0f}% は、着地時にかかとが {HEEL_UP_CM} cm 以上浮いていました。矢印別：{txt}。',
+              f'Of {len(conf)} reliable steps, {p:.0f}% landed with the heel more than {HEEL_UP_CM} cm off the panel. By arrow: {txt}.'),
              ('高密度時用前腳掌踩（腳跟不落地）比較快、也比較不震；'
               + (f'{"、".join(flat)} 大多整隻腳踩平，這幾個方向可以試著只用前腳掌點板。' if flat else '各方向都有用前腳掌踩，維持即可。'),
               '高密度では前足部で踏む（かかとを下ろさない）方が速く、衝撃も少なくなります。'
               + (f'{"・".join(flat)} はほとんど足裏全体で踏んでいるので、前足部だけでパネルをタッチするよう試してみましょう。'
-                 if flat else 'どの方向も前足部で踏めているので、この調子で。')))
+                 if flat else 'どの方向も前足部で踏めているので、この調子で。'),
+              'In dense streams, stepping with the front of your foot (heel stays up) is faster and easier on your body. '
+              + (f'You step on {", ".join(flat)} mostly with the whole foot. Try to tap these panels with only the front of your foot.'
+                 if flat else 'You already use the front of your foot on every arrow. Keep it up.')))
     # 重心事件
     if events:
         M['events'] = len(events)
         cc = sorted(ev_stats.get('causes', {}).items(), key=lambda kv: -kv[1])[:3]
         pats = (ev_stats.get('patterns') or [])[:3]
         mx = max(e['dev_cm'] for e in events)
-        top_c = ('、'.join(f"{CAUSE_TXT['zh'][k]} {v} 次" for k, v in cc), '・'.join(f"{CAUSE_TXT['ja'][k]} {v} 回" for k, v in cc))
+        top_c = ('、'.join(f"{CAUSE_TXT['zh'][k]} {v} 次" for k, v in cc), '・'.join(f"{CAUSE_TXT['ja'][k]} {v} 回" for k, v in cc),
+                 ', '.join(f"{CAUSE_TXT['en'][k]} ({v} times)" for k, v in cc))
         top_p = ('、'.join(f"{q['pattern']}（平均 {q['mean_cm']} cm，平常的 {q['ratio']} 倍，{q['n']} 次）" for q in pats),
-                 '・'.join(f"{q['pattern']}（平均 {q['mean_cm']} cm・普段の {q['ratio']} 倍・{q['n']} 回）" for q in pats))
+                 '・'.join(f"{q['pattern']}（平均 {q['mean_cm']} cm・普段の {q['ratio']} 倍・{q['n']} 回）" for q in pats),
+                 '; '.join(f"{q['pattern']} (avg. {q['mean_cm']} cm, {q['ratio']}× your normal, {q['n']} times)" for q in pats))
         _adv(A, '重心', 'info',
-             (f'重心大幅移動 {len(events)} 處', f'重心の大きな移動 {len(events)} 件'),
+             (f'重心大幅移動 {len(events)} 處', f'重心の大きな移動 {len(events)} 件', f'{len(events)} big balance point shifts'),
              (f'以你慣用的姿勢為基準（{axis["axis"]}方向），挑出偏離最明顯的 {len(events)} 段；最大偏離 {mx:.0f} cm。'
               f'常見原因：{top_c[0] or "無明顯共通點"}。' + (f'最容易讓重心跑掉的三步配置：{top_p[0]}。' if pats else ''),
               f'いつもの姿勢を基準に（{ja(axis["axis"])}方向）、ずれが最も大きかった {len(events)} 区間を抽出しました。最大のずれは {mx:.0f} cm。'
-              f'主な原因：{top_c[1] or "共通点なし"}。' + (f'重心が崩れやすい 3 歩の並び：{top_p[1]}。' if pats else '')),
+              f'主な原因：{top_c[1] or "共通点なし"}。' + (f'重心が崩れやすい 3 歩の並び：{top_p[1]}。' if pats else ''),
+              f'Compared with your usual position, in the {en(axis["axis"])} direction, these are the {len(events)} parts where your '
+              f'balance point moved away the most. The biggest shift was {mx:.0f} cm. '
+              f'Common causes: {top_c[2] or "no clear pattern"}.' + (f' 3-step patterns that move your balance point most: {top_p[2]}.' if pats else '')),
              ('到「重心事件」分頁逐一點開看慢動作。交叉步時先轉髖、再出腳；大跨距（←→、↑↓）時讓腳去、骨盆留在中央；'
               '同一腳連踩換板時，另一腳先穩住承重再移動。',
               '「重心イベント」タブで一つずつスロー再生して確認しましょう。クロスではまず腰を回してから足を出す。'
               '大きな踏み替え（←→・↑↓）では足だけを出して骨盤は中央に残す。同じ足で続けてパネルを変えるときは、'
-              '反対の足でしっかり体重を支えてから動かします。'))
+              '反対の足でしっかり体重を支えてから動かします。',
+              'Open the "Balance events" tab and watch each one in slow motion. For crossovers, turn your hips first, then move your foot. '
+              'For wide moves (←→, ↑↓), send only your foot out and keep your hips over the center. '
+              'For doublesteps (the same foot moves to a new panel), first put your weight on the other foot, then move.'))
     A.sort(key=lambda a: order[a['level']])
 
 
@@ -1367,37 +1392,46 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
     M['steps_per_s'] = _r(len(steps) / dur, 2) if dur else None
     M['calibration'] = source
     M['com_mode'] = com_mode
-    note = AUTO_NOTE if source == 'auto-feet' else ('', '')
+    note = AUTO_NOTE if source == 'auto-feet' else ('', '', '')
 
     # 重心：沿可觀測軸
     v = com_obs[np.isfinite(com_obs)]
     if axis and len(v) > fps * 5:
         sway = float(np.std(v)); bias = float(np.median(v))
         center = float(np.mean(np.abs(v) < 0.5) * 100)
-        ax_zh, ax_ja = axis['axis'], ja(axis['axis'])
+        ax_zh, ax_ja, ax_en = axis['axis'], ja(axis['axis']), en(axis['axis'])
         M['com_axis'] = ax_zh
         M['com_sway'] = _r(sway); M['com_sway_cm'] = _r(sway * PANEL_CM, 1)
         M['com_bias'] = _r(bias); M['com_center_pct'] = _r(center, 1)
         lv = _level(sway, 'com_sway')
         cm = sway * PANEL_CM
-        _adv(A, '重心', lv, (f'重心{ax_zh}晃動', f'重心の揺れ（{ax_ja}）'),
+        _adv(A, '重心', lv, (f'重心{ax_zh}晃動', f'重心の揺れ（{ax_ja}）', f'Balance point sway: {ax_en}'),
              (f'這個鏡位能量到重心的{ax_zh}方向。重心在這個方向的標準差 {sway:.2f} 格（約 {cm:.0f} cm），{center:.0f}% 的時間在中央板範圍內。',
-              f'このカメラ位置では重心の{ax_ja}方向を測定できます。この方向の標準偏差は {sway:.2f} マス（約 {cm:.0f} cm）、{center:.0f}% の時間は中央パネルの範囲内でした。'),
+              f'このカメラ位置では重心の{ax_ja}方向を測定できます。この方向の標準偏差は {sway:.2f} マス（約 {cm:.0f} cm）、{center:.0f}% の時間は中央パネルの範囲内でした。',
+              f'From this camera angle we can measure your balance point in the {ax_en} direction. In this direction it moves '
+              f'{sway:.2f} panels (about {cm:.0f} cm, standard deviation). It stays over the center panel {center:.0f}% of the time.'),
              ('腳去踩、身體不要跟過去：想像肚臍固定在中央板正上方，用髖關節把腿送出去。'
               '練習：放慢速度踩交替串，看介面的重心曲線是否能維持在中線 ±0.2 格內。',
               '足だけを出して、体はついていかないこと。へそが中央パネルの真上に固定されているイメージで、股関節から脚を送り出します。'
-              '練習：交互踏みをゆっくり踏み、画面の重心グラフが中心線 ±0.2 マス以内に収まるか確認しましょう。')
-             if lv != 'good' else ('重心大多留在中央，維持即可。', '重心はほぼ中央に保たれています。この調子で。'))
+              '練習：交互踏みをゆっくり踏み、画面の重心グラフが中心線 ±0.2 マス以内に収まるか確認しましょう。',
+              'Move your feet, not your body. Imagine your belly button is fixed above the center panel, and send your legs out from the hips. '
+              'Practice: step a slow alternating stream and check that the balance point graph stays within ±0.2 panels of the center line.')
+             if lv != 'good' else ('重心大多留在中央，維持即可。', '重心はほぼ中央に保たれています。この調子で。',
+                                   'Your balance point stays mostly in the center. Keep it up.'))
         lvb = _level(abs(bias), 'com_bias')
         if lvb != 'good':
             d = axis['pos'] if bias > 0 else axis['neg']
             cm = abs(bias) * PANEL_CM
-            _adv(A, '重心', lvb, (f'重心偏{d}', f'重心が{ja(d)}寄り'),
+            _adv(A, '重心', lvb, (f'重心偏{d}', f'重心が{ja(d)}寄り', f'Balance point off to the {en(d)}'),
                  (f'整段重心平均偏{d} {abs(bias):.2f} 格（約 {cm:.0f} cm），以踏板中心為基準。',
-                  f'曲全体で重心が平均 {abs(bias):.2f} マス（約 {cm:.0f} cm）{ja(d)}寄りでした（パネル中心基準）。'),
+                  f'曲全体で重心が平均 {abs(bias):.2f} マス（約 {cm:.0f} cm）{ja(d)}寄りでした（パネル中心基準）。',
+                  f'Over the whole song, your balance point was on average {abs(bias):.2f} panels (about {cm:.0f} cm) '
+                  f'to the {en(d)}, measured from the center of the pad.'),
                  ('平常站的位置就偏離中央，出腳到另一側時距離變長、也比較晚回來。把「預備位置」重新定在中央板正上方，兩腳平均受力。' + note[0],
                   '普段の立ち位置が中央からずれていると、反対側へ踏むときの距離が長くなり、戻りも遅れます。'
-                  '「構え」の位置を中央パネルの真上に置き直し、両足に均等に体重を乗せましょう。' + note[1]))
+                  '「構え」の位置を中央パネルの真上に置き直し、両足に均等に体重を乗せましょう。' + note[1],
+                  'If your normal standing spot is off-center, steps to the other side become longer and you come back later. '
+                  'Move your "home position" right above the center panel, with equal weight on both feet.' + note[2]))
     r = com_rel[np.isfinite(com_rel)]
     if axis and len(r) > fps * 3:
         rb = float(np.median(r))
@@ -1406,24 +1440,37 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
         cm = abs(rb) * PANEL_CM
         if axis['axis'] == '前後' or view['mode'] == 'side':
             back = rb > 0
-            _adv(A, '重心', lv, ('重心相對雙腳（前後）', '両足に対する重心（前後）'),
+            _adv(A, '重心', lv, ('重心相對雙腳（前後）', '両足に対する重心（前後）', 'Balance point vs. feet (front–back)'),
                  (f'兩腳都著地時，重心平均在兩腳中點偏{"後" if back else "前"} {abs(rb):.2f} 格（約 {cm:.0f} cm）。',
-                  f'両足が着地しているとき、重心は両足の中点より平均 {abs(rb):.2f} マス（約 {cm:.0f} cm）{"後ろ" if back else "前"}にありました。'),
+                  f'両足が着地しているとき、重心は両足の中点より平均 {abs(rb):.2f} マス（約 {cm:.0f} cm）{"後ろ" if back else "前"}にありました。',
+                  f'When both feet were down, your balance point was on average {abs(rb):.2f} panels (about {cm:.0f} cm) '
+                  f'{"behind" if back else "in front of"} the middle of your feet.'),
                  (('重心落在腳跟後面，↑ 會踩不深、要用腳跟硬撐；上半身微微前傾，把重心放到前腳掌。',
-                   '重心がかかとより後ろにあると、↑ を深く踏めず、かかとで踏ん張ることになります。上半身をわずかに前傾させ、重心を母指球に乗せましょう。')
+                   '重心がかかとより後ろにあると、↑ を深く踏めず、かかとで踏ん張ることになります。上半身をわずかに前傾させ、重心を母指球に乗せましょう。',
+                   'When your balance point is behind your heels, you cannot step deep on ↑ and you hold yourself up with your heels. '
+                   'Lean your upper body forward a little and put your weight on the front of your feet.')
                   if back else
                   ('重心壓在腳尖前面，↓ 容易來不及回收；骨盆往後收一點，回到腳掌正上方。',
-                   '重心がつま先より前にあると、↓ の戻りが間に合わなくなりがちです。骨盤を少し後ろに引き、足裏の真上に戻しましょう。'))
-                 if lv != 'good' else ('雙腳著地時重心大致在腳掌上方，平衡良好。', '両足着地時の重心はほぼ足裏の上にあり、バランスは良好です。'))
+                   '重心がつま先より前にあると、↓ の戻りが間に合わなくなりがちです。骨盤を少し後ろに引き、足裏の真上に戻しましょう。',
+                   'When your balance point is in front of your toes, it is hard to come back from ↓ in time. '
+                   'Pull your hips back a little so they are over your feet again.'))
+                 if lv != 'good' else ('雙腳著地時重心大致在腳掌上方，平衡良好。', '両足着地時の重心はほぼ足裏の上にあり、バランスは良好です。',
+                                       'With both feet down, your balance point is about over your feet. Good balance.'))
         else:
             d = axis['pos'] if rb > 0 else axis['neg']
-            _adv(A, '重心', lv, ('重心相對雙腳', '両足に対する重心'),
+            _adv(A, '重心', lv, ('重心相對雙腳', '両足に対する重心', 'Balance point vs. feet'),
                  (f'兩腳都著地時，重心平均在兩腳中點偏{d} {abs(rb):.2f} 格（約 {cm:.0f} cm，沿{axis["axis"]}方向）。',
-                  f'両足が着地しているとき、重心は両足の中点より平均 {abs(rb):.2f} マス（約 {cm:.0f} cm）{ja(d)}寄りでした（{ja(axis["axis"])}方向）。'),
+                  f'両足が着地しているとき、重心は両足の中点より平均 {abs(rb):.2f} マス（約 {cm:.0f} cm）{ja(d)}寄りでした（{ja(axis["axis"])}方向）。',
+                  f'When both feet were down, your balance point was on average {abs(rb):.2f} panels (about {cm:.0f} cm) '
+                  f'to the {en(d)} of the middle of your feet, in the {en(axis["axis"])} direction.'),
                  ('雙腳著地時重心應該在兩腳之間；長期偏向一側，代表那一側的腳承重較多、另一腳比較「虛」，換腳時會慢半拍。練習時刻意讓兩腳平均受力。',
                   '両足着地時の重心は両足の間にあるのが理想です。いつも片側に寄っていると、その側の足に体重がかかり、反対の足が「浮いた」状態になって'
-                  '踏み替えが半拍遅れます。練習では両足に均等に体重を乗せることを意識しましょう。')
-                 if lv != 'good' else ('雙腳著地時重心大致在兩腳之間，平衡良好。', '両足着地時の重心はほぼ両足の間にあり、バランスは良好です。'))
+                  '踏み替えが半拍遅れます。練習では両足に均等に体重を乗せることを意識しましょう。',
+                  'With both feet down, your balance point should be between your feet. If it always leans to one side, that foot carries '
+                  'more weight and the other foot is "light", so your foot changes come half a beat late. '
+                  'When you practice, try to keep equal weight on both feet.')
+                 if lv != 'good' else ('雙腳著地時重心大致在兩腳之間，平衡良好。', '両足着地時の重心はほぼ両足の間にあり、バランスは良好です。',
+                                       'With both feet down, your balance point is about between your feet. Good balance.'))
 
     # 上下彈跳
     h = hip_h[np.isfinite(hip_h)]
@@ -1432,14 +1479,19 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
         bounce = float(np.std(hd) / leg_ratio * 100)
         M['bounce_pct'] = _r(bounce, 2)
         lv = _level(bounce, 'bounce_pct')
-        _adv(A, '省力', lv, ('骨盆上下彈跳', '骨盤の上下動'),
+        _adv(A, '省力', lv, ('骨盆上下彈跳', '骨盤の上下動', 'Hip bounce'),
              (f'骨盆高度（去除慢速變化後）標準差約為腿長的 {bounce:.1f}%。',
-              f'骨盤の高さ（ゆっくりした変化を除いたもの）の標準偏差は、脚の長さの約 {bounce:.1f}% でした。'),
+              f'骨盤の高さ（ゆっくりした変化を除いたもの）の標準偏差は、脚の長さの約 {bounce:.1f}% でした。',
+              f'Your hip height goes up and down by about {bounce:.1f}% of your leg length (standard deviation, slow changes removed).'),
              ('每一步都把身體撐起來會很耗體力。膝蓋保持微彎當彈簧，髖關節高度固定，用小腿與腳踝發力。'
               '練習：長串 stream 時盯著介面的「骨盆高度」曲線，讓它盡量平。',
               '一歩ごとに体を持ち上げるとスタミナを大きく消耗します。膝を軽く曲げてバネにし、股関節の高さを一定に保ち、ふくらはぎと足首で踏みましょう。'
-              '練習：長い乱打で、画面の「骨盤の高さ」グラフがなるべく平らになるよう意識します。')
-             if lv != 'good' else ('骨盆高度穩定，出力效率不錯。', '骨盤の高さが安定しており、効率よく踏めています。'))
+              '練習：長い乱打で、画面の「骨盤の高さ」グラフがなるべく平らになるよう意識します。',
+              'Lifting your whole body on every step uses a lot of stamina. Keep your knees a little bent like springs, '
+              'keep your hips at the same height, and step with your lower legs and ankles. '
+              'Practice: in long streams, watch the "Hip height" graph and try to keep it flat.')
+             if lv != 'good' else ('骨盆高度穩定，出力效率不錯。', '骨盤の高さが安定しており、効率よく踏めています。',
+                                   'Your hip height is stable. You are stepping efficiently.'))
 
     # 抬腳高度
     if swings:
@@ -1452,21 +1504,28 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
                 M[f'lift_cm_{s}'] = _r(np.median(ls), 1) if ls else None
             lv = _level(med, 'lift_cm')
             L_, R_ = M['lift_cm_L'], M['lift_cm_R']
-            _adv(A, '省力', lv, ('抬腳高度', '足の上げ高さ'),
+            _adv(A, '省力', lv, ('抬腳高度', '足の上げ高さ', 'Foot lift height'),
                  (f'每次移動腳的抬起高度中位數約 {med:.0f} cm，較高的 10% 約 {p90:.0f} cm（左 {L_} / 右 {R_} cm，以小腿長 {SHANK_CM} cm 換算，估計值）。',
-                  f'足を動かすときの上げ高さは中央値で約 {med:.0f} cm、高い方の 10% で約 {p90:.0f} cm でした（左 {L_} / 右 {R_} cm、すね {SHANK_CM} cm として換算した推定値）。'),
+                  f'足を動かすときの上げ高さは中央値で約 {med:.0f} cm、高い方の 10% で約 {p90:.0f} cm でした（左 {L_} / 右 {R_} cm、すね {SHANK_CM} cm として換算した推定値）。',
+                  f'When you move a foot, you lift it about {med:.0f} cm (median), and about {p90:.0f} cm for the highest 10% '
+                  f'(left {L_} / right {R_} cm; estimated with a lower leg length of {SHANK_CM} cm).'),
                  ('腳離板 3–5 cm 就夠了。高密度段改用「貼地滑出去」的感覺，而不是抬腿再踩下；腳抬越高，落地越晚，也越累。',
                   'パネルから 3〜5 cm 浮けば十分です。高密度の区間では、脚を上げて踏み下ろすのではなく「床をすべらせて出す」感覚で。'
-                  '足を高く上げるほど着地が遅れ、疲れも増えます。')
-                 if lv != 'good' else ('抬腳高度低，動作精簡。', '足の上げ高さは低く、無駄のない動きです。'))
+                  '足を高く上げるほど着地が遅れ、疲れも増えます。',
+                  'Lifting your foot 3–5 cm off the panel is enough. In dense parts, try to "slide" your foot out low '
+                  'instead of lifting your leg and stamping down. The higher you lift, the later you land and the more tired you get.')
+                 if lv != 'good' else ('抬腳高度低，動作精簡。', '足の上げ高さは低く、無駄のない動きです。',
+                                       'You keep your feet low. Clean, efficient movement.'))
             if L_ and R_:
                 hi, lo = max(L_, R_), min(L_, R_)
                 if hi - lo > 3 and hi > 1.4 * lo:
                     w = '左' if L_ > R_ else '右'
-                    _adv(A, '省力', 'warn', (f'{w}腳抬得比較高', f'{w}足の方が高く上がっている'),
-                         (f'左 {L_} cm / 右 {R_} cm。', f'左 {L_} cm / 右 {R_} cm。'),
+                    _adv(A, '省力', 'warn', (f'{w}腳抬得比較高', f'{w}足の方が高く上がっている', f'{en(w).capitalize()} foot lifts higher'),
+                         (f'左 {L_} cm / 右 {R_} cm。', f'左 {L_} cm / 右 {R_} cm。', f'Left {L_} cm / right {R_} cm.'),
                          (f'{w}腳可能是比較不熟練或習慣「踢」的那隻；單獨用{w}腳練低抬腳的踩踏。',
-                          f'{w}足は、慣れていない足か「蹴る」癖のある足かもしれません。{w}足だけで、低く踏む練習をしてみましょう。'))
+                          f'{w}足は、慣れていない足か「蹴る」癖のある足かもしれません。{w}足だけで、低く踏む練習をしてみましょう。',
+                          f'Your {en(w)} foot may be your weaker foot, or the one that tends to "kick". '
+                          f'Practice low steps with only your {en(w)} foot.'))
 
     # 膝蓋（側面視角才可靠）
     if side_view:
@@ -1479,19 +1538,25 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
             med = float(np.median(k))
             M['knee_stance_deg'] = _r(med, 1)
             if med > 170:
-                _adv(A, '省力', 'warn', ('膝蓋偏直', '膝が伸びぎみ'),
-                     (f'落地時膝蓋角度中位數 {med:.0f}°（180° 為完全伸直）。', f'着地時の膝角度は中央値 {med:.0f}°（180° で完全に伸びた状態）。'),
+                _adv(A, '省力', 'warn', ('膝蓋偏直', '膝が伸びぎみ', 'Knees too straight'),
+                     (f'落地時膝蓋角度中位數 {med:.0f}°（180° 為完全伸直）。', f'着地時の膝角度は中央値 {med:.0f}°（180° で完全に伸びた状態）。',
+                      f'Median knee angle when landing: {med:.0f}° (180° = fully straight).'),
                      ('膝蓋鎖直落地衝擊直接傳到膝蓋和腰，也比較難快速換腳；保持約 150–165° 的微彎。',
-                      '膝を伸ばしきって着地すると衝撃が膝や腰に直接伝わり、素早い踏み替えも難しくなります。150〜165° くらいの軽い曲げを保ちましょう。'))
+                      '膝を伸ばしきって着地すると衝撃が膝や腰に直接伝わり、素早い踏み替えも難しくなります。150〜165° くらいの軽い曲げを保ちましょう。',
+                      'Landing with locked knees sends the impact straight into your knees and lower back, '
+                      'and makes fast foot changes harder. Keep a small bend, about 150–165°.'))
             elif med < 135:
-                _adv(A, '省力', 'warn', ('蹲得偏低', '腰を落としすぎ'),
-                     (f'落地時膝蓋角度中位數 {med:.0f}°。', f'着地時の膝角度は中央値 {med:.0f}°。'),
+                _adv(A, '省力', 'warn', ('蹲得偏低', '腰を落としすぎ', 'Standing too low'),
+                     (f'落地時膝蓋角度中位數 {med:.0f}°。', f'着地時の膝角度は中央値 {med:.0f}°。', f'Median knee angle when landing: {med:.0f}°.'),
                      ('太低的重心要靠大腿一直出力撐著，長曲後段容易沒力；稍微站高一點，約 150–165°。',
-                      '重心が低すぎると太ももで支え続けることになり、長い曲の後半で脚が持ちません。少し高めに立ち、150〜165° くらいを目安に。'))
+                      '重心が低すぎると太ももで支え続けることになり、長い曲の後半で脚が持ちません。少し高めに立ち、150〜165° くらいを目安に。',
+                      'If you stay too low, your thighs must work all the time, and your legs get tired near the end of long songs. '
+                      'Stand a little higher, about 150–165°.'))
             else:
-                _adv(A, '省力', 'good', ('膝蓋彎曲程度', '膝の曲がり具合'),
-                     (f'落地時膝蓋角度中位數 {med:.0f}°，在合理範圍。', f'着地時の膝角度は中央値 {med:.0f}° で、適正範囲です。'),
-                     ('維持即可。', 'この調子で。'))
+                _adv(A, '省力', 'good', ('膝蓋彎曲程度', '膝の曲がり具合', 'Knee bend'),
+                     (f'落地時膝蓋角度中位數 {med:.0f}°，在合理範圍。', f'着地時の膝角度は中央値 {med:.0f}° で、適正範囲です。',
+                      f'Median knee angle when landing: {med:.0f}°. This is a good range.'),
+                     ('維持即可。', 'この調子で。', 'Keep it up.'))
 
     # 踩點
     if view['mode'] == 'homography':
@@ -1533,15 +1598,22 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
                 M['lit_mismatch'] = dict(sorted(mism.items(), key=lambda kv: -kv[1])[:6])
                 M['press_part'] = parts
                 M['lit_untouched'] = sum(1 for s in lit if s.get('part') == '未碰到')
-                dz, dj = _part_summary(parts)
-                _adv(A, '踩點', 'info', ('用腳的哪個部位踩（以踏板亮燈為準）', 'どの部位で踏んだか（パネル点灯基準）'),
+                dz, dj, de = _part_summary(parts)
+                _adv(A, '踩點', 'info', ('用腳的哪個部位踩（以踏板亮燈為準）', 'どの部位で踏んだか（パネル点灯基準）',
+                                         'Which part of the foot you step with (based on panel lights)'),
                      ('；'.join(dz) + f'。骨架判斷與亮燈一致 {agree:.0f}%' + (f'，另有 {n_lo} 步是只靠亮燈才抓到的' if n_lo else '') + '。',
-                      '；'.join(dj) + f'。骨格判定と点灯の一致率は {agree:.0f}%' + (f'。ほかに点灯だけで検出した歩が {n_lo} 歩あります' if n_lo else '') + '。'),
+                      '；'.join(dj) + f'。骨格判定と点灯の一致率は {agree:.0f}%' + (f'。ほかに点灯だけで検出した歩が {n_lo} 歩あります' if n_lo else '') + '。',
+                      '; '.join(de) + f'. The skeleton matches the panel lights {agree:.0f}% of the time'
+                      + (f'. {n_lo} more steps were found only from the panel lights' if n_lo else '') + '.'),
                      ('板位以機台亮燈為準，骨架負責判斷是腳跟、腳尖還是整隻腳。腳跟踩 ↓、腳尖踩 ↑ 是高階常見的省力腳法；'
                       '如果 ←→ 也常只用腳尖或腳跟邊緣踩，代表身體沒有轉過去，容易踩不穩。',
                       'パネルの判定は筐体の点灯を基準にし、かかと・つま先・足全体のどこで踏んだかを骨格から判定しています。'
                       'かかとで ↓、つま先で ↑ を踏むのは上級者によくある省エネの踏み方です。←→ もつま先やかかとの端だけで踏むことが多い場合は、'
-                      '体の向きが追いついておらず、踏みが不安定になりがちです。'))
+                      '体の向きが追いついておらず、踏みが不安定になりがちです。',
+                      'The panel comes from the machine\'s panel lights. The skeleton decides if you used the heel, the toe or the whole foot. '
+                      'Heel on ↓ and toe on ↑ is a common energy-saving technique for high-level players. '
+                      'If you also often hit ←→ with only the toe or the edge of the heel, your body has not turned enough, '
+                      'and your steps can become unstable.'))
             elif not use_lights:
                 # 不亮燈的機台：板位與部位都只靠骨架（腳長用預設，沒有亮燈校正）→ 參考值
                 parts = {}
@@ -1551,40 +1623,61 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
                         parts[s['panel']][s['part']] += 1
                 if parts:
                     M['press_part'] = parts
-                    dz, dj = _part_summary(parts)
-                    _adv(A, '踩點', 'info', ('用腳的哪個部位踩（骨架判斷・參考值）', 'どの部位で踏んだか（骨格判定・参考値）'),
+                    dz, dj, de = _part_summary(parts)
+                    _adv(A, '踩點', 'info', ('用腳的哪個部位踩（骨架判斷・參考值）', 'どの部位で踏んだか（骨格判定・参考値）',
+                                             'Which part of the foot you step with (skeleton only, for reference)'),
                          ('；'.join(dz) + '。這支影片設定為「踏板不亮燈」，板位與部位都只靠骨架判斷、沒有亮燈確認，信心較低。',
-                          '；'.join(dj) + '。この動画は「パネルが点灯しない」設定のため、パネルも部位も骨格だけで判定しており、点灯による確認がなく信頼度は低めです。'),
+                          '；'.join(dj) + '。この動画は「パネルが点灯しない」設定のため、パネルも部位も骨格だけで判定しており、点灯による確認がなく信頼度は低めです。',
+                          '; '.join(de) + '. This video is set to "panels do not light up", so the panel and the part of the foot '
+                          'come only from the skeleton, with no light check. Confidence is lower.'),
                          ('腳跟踩 ↓、腳尖踩 ↑ 是高階常見的省力腳法；如果 ←→ 也常只用腳尖或腳跟邊緣踩，代表身體沒有轉過去，容易踩不穩。',
                           'かかとで ↓、つま先で ↑ を踏むのは上級者によくある省エネの踏み方です。←→ もつま先やかかとの端だけで踏むことが多い場合は、'
-                          '体の向きが追いついておらず、踏みが不安定になりがちです。'))
+                          '体の向きが追いついておらず、踏みが不安定になりがちです。',
+                          'Heel on ↓ and toe on ↑ is a common energy-saving technique for high-level players. '
+                          'If you also often hit ←→ with only the toe or the edge of the heel, your body has not turned enough, '
+                          'and your steps can become unstable.'))
             lv = _level(off, 'offpanel_pct')
-            _adv(A, '踩點', lv, ('踩到非箭頭區', '矢印以外の場所を踏んだ'),
+            _adv(A, '踩點', lv, ('踩到非箭頭區', '矢印以外の場所を踏んだ', 'Steps outside the arrow panels'),
                  (f'{off:.0f}% 的落地整隻腳都沒壓到箭頭板，而是落在角落或踏板外（只踩中央板的不計）。',
-                  f'着地の {off:.0f}% は足全体が矢印パネルに触れておらず、角やパネル外でした（中央パネルだけのものは除く）。'),
+                  f'着地の {off:.0f}% は足全体が矢印パネルに触れておらず、角やパネル外でした（中央パネルだけのものは除く）。',
+                  f'In {off:.0f}% of landings, the whole foot missed the arrow panels and landed on a corner or off the pad '
+                  '(steps only on the center panel are not counted).'),
                  ('角落沒有感應器，踩到等於浪費一步又拉開重心；落腳時看準箭頭板中心，交叉步時尤其注意不要踩到斜角。' + note[0],
                   '角にはセンサーがないので、踏んでも一歩ぶんの無駄になり、重心も崩れます。着地のときは矢印パネルの中心を狙い、'
-                  '特にクロスでは斜めの角を踏まないように注意しましょう。' + note[1])
-                 if lv != 'good' else ('幾乎都踩在有效的板上。', 'ほぼすべて有効なパネルを踏めています。'))
+                  '特にクロスでは斜めの角を踏まないように注意しましょう。' + note[1],
+                  'Corners have no sensors, so a step there is a wasted step and also pulls your balance away. '
+                  'Aim for the middle of the arrow panel, and be extra careful not to hit the corners in crossovers.' + note[2])
+                 if lv != 'good' else ('幾乎都踩在有效的板上。', 'ほぼすべて有効なパネルを踏めています。',
+                                       'Almost all your steps land on real panels.'))
             lv = _level(edge_pct, 'edge_pct')
             ecm = 0.12 * PANEL_CM
-            _adv(A, '踩點', lv, ('落點貼近板緣', 'パネルの端を踏んでいる'),
+            _adv(A, '踩點', lv, ('落點貼近板緣', 'パネルの端を踏んでいる', 'Steps near the panel edge'),
                  (f'踩箭頭的步數中，有 {edge_pct:.0f}% 腳只壓進板內不到 0.12 格（約 {ecm:.0f} cm）。',
-                  f'矢印を踏んだ歩のうち {edge_pct:.0f}% は、パネルの内側に 0.12 マス（約 {ecm:.0f} cm）未満しか入っていませんでした。'),
+                  f'矢印を踏んだ歩のうち {edge_pct:.0f}% は、パネルの内側に 0.12 マス（約 {ecm:.0f} cm）未満しか入っていませんでした。',
+                  f'Of your arrow steps, {edge_pct:.0f}% went less than 0.12 panels (about {ecm:.0f} cm) inside the panel.'),
                  ('貼邊踩容易沒感應或誤踩隔壁板。踩 ↑ 時可讓腳跟留在中央、腳掌前半落在箭頭中間；踩 ↓ 時反過來，腳尖留在中央。' + note[0],
                   '端を踏むと反応しなかったり、隣のパネルを誤って踏んだりしやすくなります。↑ はかかとを中央に残して前足部を矢印の中央に、'
-                  '↓ は逆につま先を中央に残して踏みましょう。' + note[1])
-                 if lv != 'good' else ('落點大多在板子內側，安全。', '着地はほぼパネルの内側で、安全です。'))
+                  '↓ は逆につま先を中央に残して踏みましょう。' + note[1],
+                  'Edge steps may not register, or may hit the next panel by mistake. For ↑, you can keep your heel on the center panel '
+                  'and put the front of your foot in the middle of the arrow. For ↓, do the opposite: keep your toes on the center panel.' + note[2])
+                 if lv != 'good' else ('落點大多在板子內側，安全。', '着地はほぼパネルの内側で、安全です。',
+                                       'Most of your steps land well inside the panels. Safe.'))
             if spreads:
                 worst = max(spreads.items(), key=lambda kv: kv[1]['spread_cm'])[0]
                 lv = _level(spreads[worst]['spread_cm'], 'spread_cm')
-                _adv(A, '踩點', lv, ('落點穩定度', '着地位置の安定性'),
+                _adv(A, '踩點', lv, ('落點穩定度', '着地位置の安定性', 'Landing consistency'),
                      ('各箭頭落點散佈：' + '、'.join(f'{k} ±{v["spread_cm"]:.0f} cm（{v["n"]} 步）' for k, v in spreads.items()) + '。',
-                      '各矢印の着地のばらつき：' + '・'.join(f'{k} ±{v["spread_cm"]:.0f} cm（{v["n"]} 歩）' for k, v in spreads.items()) + '。'),
+                      '各矢印の着地のばらつき：' + '・'.join(f'{k} ±{v["spread_cm"]:.0f} cm（{v["n"]} 歩）' for k, v in spreads.items()) + '。',
+                      'Spread of landings on each arrow: '
+                      + ', '.join(f'{k} ±{v["spread_cm"]:.0f} cm ({v["n"]} steps)' for k, v in spreads.items()) + '.'),
                      (f'{worst} 的落點最分散，代表每次踩的位置不固定，通常是重心沒回中、出腳的起點不一樣。先把重心回中做好，落點自然會集中。',
                       f'{worst} の着地が最もばらついています。毎回違う位置を踏んでいるということで、たいていは重心が中央に戻っておらず、'
-                      '足を出す起点が毎回違うのが原因です。まず重心を中央に戻すことを意識すれば、着地も自然にそろってきます。')
-                     if lv != 'good' else ('各箭頭落點集中，腳法穩定。', '各矢印の着地がそろっていて、足さばきが安定しています。'))
+                      '足を出す起点が毎回違うのが原因です。まず重心を中央に戻すことを意識すれば、着地も自然にそろってきます。',
+                      f'Your landings on {worst} are the most spread out: you hit a different spot each time. Usually this is because '
+                      'your balance point does not return to the center, so each step starts from a different place. '
+                      'Work on returning to the center first, and your landings will become more consistent.')
+                     if lv != 'good' else ('各箭頭落點集中，腳法穩定。', '各矢印の着地がそろっていて、足さばきが安定しています。',
+                                           'Your landings on each arrow are tight. Your footwork is stable.'))
     elif view['mode'] == 'side':
         st = [s for s in steps if 'pad' in s and s['pad'][1] is not None]
         if len(st) >= 20:
@@ -1597,27 +1690,37 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
                 if sel.sum() >= 5:
                     M[f'reach_{k}'] = _r(float(np.median(np.abs(ys[sel]))))
             rc, ru, rd = M['row_counts'], M.get('reach_↑') or 0, M.get('reach_↓') or 0
-            _adv(A, '踩點', 'info', ('前後落點（側面視角）', '前後の着地（真横からの視点）'),
+            _adv(A, '踩點', 'info', ('前後落點（側面視角）', '前後の着地（真横からの視点）', 'Front–back landings (side view)'),
                  (f'↑ 列 {rc["↑"]} 步、中間列 {rc["中間"]} 步、↓ 列 {rc["↓"]} 步；{outside:.0f}% 超出踏板前後範圍。'
                   f'↑ 落點深度中位數 {ru:.2f} 格、↓ {rd:.2f} 格（1.0 = 箭頭中心）。',
                   f'↑ 列 {rc["↑"]} 歩・中段 {rc["中間"]} 歩・↓ 列 {rc["↓"]} 歩。{outside:.0f}% はパネルの前後範囲外。'
-                  f'↑ の着地の深さは中央値 {ru:.2f} マス、↓ は {rd:.2f} マス（1.0 = 矢印の中心）。'),
+                  f'↑ の着地の深さは中央値 {ru:.2f} マス、↓ は {rd:.2f} マス（1.0 = 矢印の中心）。',
+                  f'↑ row {rc["↑"]} steps, middle row {rc["中間"]} steps, ↓ row {rc["↓"]} steps; {outside:.0f}% were outside '
+                  f'the front–back range of the pad. Median depth: ↑ {ru:.2f} panels, ↓ {rd:.2f} panels (1.0 = arrow center).'),
                  ('這個鏡位幾乎和地面平行，只能判斷前後；左右是由腳的遠近大小推估，僅供參考。想看完整的四方向落點，建議從玩家後上方斜拍（手機高度約腰部）。',
                   'このカメラ位置は床とほぼ平行なので、前後しか判定できません。左右は足の見かけの大きさからの推定で、参考値です。'
-                  '四方向すべての着地を見るには、プレイヤーの斜め後ろ上方（スマホを腰の高さ）から撮影してください。'))
+                  '四方向すべての着地を見るには、プレイヤーの斜め後ろ上方（スマホを腰の高さ）から撮影してください。',
+                  'This camera is almost level with the floor, so we can only measure front–back. Left–right is guessed from how big '
+                  'the feet look, so use it only as a reference. To see landings in all four directions, film from behind and above '
+                  'the player at an angle (phone at about waist height).'))
 
     # 扶桿
     if hold:
         M['hand_hold'] = {k: _r(v * 100, 1) for k, v in hold.items()}
         mx = max(hold.values())
         if mx > 0.5:
-            hand = '右手' if hold.get('R', 0) >= hold.get('L', 0) else '左手'
-            _adv(A, '其他', 'info', ('扶桿', 'バーの使用'),
+            right = hold.get('R', 0) >= hold.get('L', 0)
+            hand = '右手' if right else '左手'
+            _adv(A, '其他', 'info', ('扶桿', 'バーの使用', 'Using the bar'),
                  (f'{hand}約 {mx * 100:.0f}% 的時間固定不動（推測扶著桿子）。',
-                  f'{hand}が約 {mx * 100:.0f}% の時間ほぼ動いていませんでした（バーを持っていたと推定）。'),
+                  f'{hand}が約 {mx * 100:.0f}% の時間ほぼ動いていませんでした（バーを持っていたと推定）。',
+                  f'Your {"right" if right else "left"} hand stayed still about {mx * 100:.0f}% of the time (probably holding the bar).'),
                  ('高難度扶桿是正常戰術，可以省下維持平衡的力氣。但如果簡單段也一直扶，可能是在補償重心不穩；可以在低密度段試著放手，檢查重心曲線有沒有變亂。',
                   '高難度でバーを使うのは正当な戦術で、バランスを保つ力を節約できます。ただ、簡単な区間でもずっと持っている場合は、'
-                  '重心の不安定さを補っている可能性があります。低密度の区間で手を離してみて、重心グラフが乱れないか確認しましょう。'))
+                  '重心の不安定さを補っている可能性があります。低密度の区間で手を離してみて、重心グラフが乱れないか確認しましょう。',
+                  'Holding the bar on hard charts is a normal strategy: it saves the energy you need for balance. '
+                  'But if you hold it even in easy parts, you may be using it to cover for poor balance. '
+                  'Try letting go in low-density parts and check if the balance point graph gets messy.'))
 
     # 左右腳使用比例
     nL = sum(1 for s in steps if s['foot'] == 'L'); nR = len(steps) - nL
@@ -1626,10 +1729,12 @@ def _metrics_and_advice(t, fps, view, steps, swings, com_obs, com_rel, axis, hip
         ratio = nL / len(steps)
         if abs(ratio - 0.5) > 0.1:
             w = '左' if ratio > 0.5 else '右'
-            _adv(A, '其他', 'info', (f'{w}腳出腳較多', f'{w}足で踏む回数が多い'),
-                 (f'左腳 {nL} 步、右腳 {nR} 步。', f'左足 {nL} 歩・右足 {nR} 歩。'),
+            _adv(A, '其他', 'info', (f'{w}腳出腳較多', f'{w}足で踏む回数が多い', f'{en(w).capitalize()} foot steps more'),
+                 (f'左腳 {nL} 步、右腳 {nR} 步。', f'左足 {nL} 歩・右足 {nR} 歩。', f'Left foot {nL} steps, right foot {nR} steps.'),
                  ('可能是譜面本身的配置，也可能是習慣用同一隻腳補拍；對照影片看是否有不必要的「墊步」。',
-                  '譜面の配置によるものかもしれませんし、同じ足で拍を埋める癖かもしれません。動画を見て、不要な「つなぎの一歩」がないか確認しましょう。'))
+                  '譜面の配置によるものかもしれませんし、同じ足で拍を埋める癖かもしれません。動画を見て、不要な「つなぎの一歩」がないか確認しましょう。',
+                  'This may come from the chart itself, or from a habit of filling notes with the same foot (doublestepping). '
+                  'Watch the video and look for extra steps you do not need.'))
     order = {'bad': 0, 'warn': 1, 'info': 2, 'good': 3}
     A.sort(key=lambda a: order[a['level']])
     return M, A

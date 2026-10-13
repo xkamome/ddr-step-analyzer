@@ -126,7 +126,8 @@ def ffmpeg_exe() -> str:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as e:  # noqa: BLE001
-        raise RuntimeError('ffmpeg が見つかりません／找不到 ffmpeg（請重新執行 setup.bat）') from e
+        raise RuntimeError('ffmpeg が見つかりません／找不到 ffmpeg（請重新執行 setup.bat）／'
+                           'ffmpeg not found (please run setup.bat again)') from e
 
 
 def download_models():

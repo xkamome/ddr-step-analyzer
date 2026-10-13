@@ -10,8 +10,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-INCLUDE = ['server.py', 'requirements.txt', 'setup.bat', 'start.bat', 'README.md', 'README.zh-TW.md', 'LICENSE',
-           'はじめにお読みください.txt', 'ddrpose', 'web', 'tools/setup.ps1']
+INCLUDE = ['server.py', 'requirements.txt', 'setup.bat', 'start.bat', 'README.md', 'README.zh-TW.md', 'README.en.md', 'LICENSE',
+           'はじめにお読みください.txt', 'README_FIRST.txt', 'ddrpose', 'web', 'tools/setup.ps1']
 
 
 def main():

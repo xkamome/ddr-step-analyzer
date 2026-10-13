@@ -1,5 +1,5 @@
 'use strict';
-// 介面文字（中文／日文）。分析建議本文由後端產生，維持中文。
+// 介面文字（中文／日文／英文）。分析建議本文由後端產生（analysis.json 的 {zh, ja, en}）。
 const I18N = {
   zh: {
     'app.title': 'DDR 踩點分析', 'add.btn': '＋ 新增影片', 'sel.aria': '選擇影片',
@@ -38,7 +38,7 @@ const I18N = {
     'dir': '偏{x}', 'row': '{a} 列',
     'now.frame': '第 {i} 幀', 'foot.L': '左腳', 'foot.R': '右腳', 'now.planted': '落地', 'now.moving': '移動中',
     'now.lit': '・亮燈確認', 'now.heelUp': '腳跟離地 {h} cm', 'now.heelDown': '腳跟著地', 'now.conf': '信心 {c}',
-    'now.com': '重心（{axis}）', 'now.rel': '，相對雙腳{d} {v} 格', 'now.lights': '亮燈', 'now.knee': '膝角', 'unit.panel': '格',
+    'now.com': '重心（{axis}）', 'now.comVal': '{d} {v} 格', 'now.rel': '，相對雙腳{d} {v} 格', 'now.lights': '亮燈', 'now.knee': '膝角', 'unit.panel': '格',
     'conf.high': '高', 'conf.medium': '中', 'conf.low': '低',
     'lv.bad': '需改善', 'lv.warn': '注意', 'lv.info': '參考', 'lv.good': '良好', 'adv.fix': '怎麼改',
     'adv.none': '資料不足，無法產生建議。',
@@ -67,6 +67,7 @@ const I18N = {
     'ev.statsTitle': '哪種配置最容易讓重心跑掉', 'ev.statsDesc': '每種三步配置之後 0.35 秒內重心偏離的平均（出現 5 次以上）；倍數是和全曲平均比。',
     'ev.pat': '平均 {cm} cm・{r} 倍・{n} 次', 'ev.causeTitle': '原因統計', 'ev.clear': '清除選取', 'ev.none': '沒有找到明顯的重心移動。',
     'ev.selected': '事件 #{k}', 'ev.types': '整個人移過去 {a}・重心跑出雙腳 {b}',
+    'paren': '（{x}）', 'p.sep': '・', 'p.colon': '：',
   },
   ja: {
     'app.title': 'DDR ステップ解析', 'add.btn': '＋ 動画を追加', 'sel.aria': '動画を選択',
@@ -105,7 +106,7 @@ const I18N = {
     'dir': '{x}寄り', 'row': '{a} 列',
     'now.frame': '{i} フレーム目', 'foot.L': '左足', 'foot.R': '右足', 'now.planted': '着地', 'now.moving': '移動中',
     'now.lit': '・点灯で確認', 'now.heelUp': 'かかと浮き {h} cm', 'now.heelDown': 'かかと接地', 'now.conf': '信頼度 {c}',
-    'now.com': '重心（{axis}）', 'now.rel': '、両足に対して{d} {v} マス', 'now.lights': '点灯', 'now.knee': '膝角度', 'unit.panel': 'マス',
+    'now.com': '重心（{axis}）', 'now.comVal': '{d} {v} マス', 'now.rel': '、両足に対して{d} {v} マス', 'now.lights': '点灯', 'now.knee': '膝角度', 'unit.panel': 'マス',
     'conf.high': '高', 'conf.medium': '中', 'conf.low': '低',
     'lv.bad': '要改善', 'lv.warn': '注意', 'lv.info': '参考', 'lv.good': '良好', 'adv.fix': '改善方法',
     'adv.none': 'データ不足のためアドバイスを生成できません。',
@@ -134,6 +135,76 @@ const I18N = {
     'ev.statsTitle': '重心が崩れやすい配置', 'ev.statsDesc': '3歩の並びごとに、直後 0.35 秒間の重心のずれを平均（5回以上出現したもの）。倍率は曲全体の平均との比較です。',
     'ev.pat': '平均 {cm} cm・{r} 倍・{n} 回', 'ev.causeTitle': '原因の内訳', 'ev.clear': '選択解除', 'ev.none': '目立った重心の移動は見つかりませんでした。',
     'ev.selected': 'イベント #{k}', 'ev.types': '体ごと移動 {a}・重心が両足から外れた {b}',
+    'paren': '（{x}）', 'p.sep': '・', 'p.colon': '：',
+  },
+  // English：B1 程度＋DDR 用語（panel, arrow, crossover, doublestep, stream, bar）；重心＝balance point
+  en: {
+    'app.title': 'DDR Step Analyzer', 'add.btn': '+ Add video', 'sel.aria': 'Select a video',
+    'offline': 'The server has stopped. Please run start.bat (or the desktop shortcut) again.',
+    'empty': 'Select or add a video', 'loading': 'Loading the analysis…', 'load.fail': 'Could not load the analysis',
+    'calib.hint': 'Drag the <b>arrow dots</b> (centers of the ←↓↑→ panels) or the <b>yellow corners</b> to match the pad. Drag inside the grid to move all of it. Mouse wheel: zoom. Drag an empty area: move the view. Double-click: reset the view. If the 3×3 grid is right but the feet are all shifted, <b>drag the top view on the right</b> to move only the feet (the grid stays). If only part of the pad is in the video, "Click matching points" is the most accurate.',
+    'arm.est': 'est.', 'pad.footOff': 'Foot offset: right {x} cm, back {y} cm',
+    'calib.clickBtn': 'Click matching points',
+    'calib.pickPrompt': '① In the <b>top view on the right</b>, click a <b>corner or center</b> that you can see in the video (the yellow box is your choice; if you choose nothing, the centers of ← ↓ ↑ → are used in that order) → ② click the same spot <b>on the video</b>. Points so far: <b>{n}</b>. When you have 4 or more (not all on one line), press "Done". You can move to a frame with lit panels first. Press Esc to cancel.',
+    'calib.pickDone': 'Done ({n} points)', 'calib.pickBad': 'These points are almost on one straight line. Please add points in other places.',
+    'calib.rotate': 'Rotate 90°', 'calib.apply': 'Apply', 'calib.applying': 'Re-analyzing…', 'calib.reset': 'Reset to auto',
+    'calib.cancel': 'Cancel', 'calib.btn': 'Calibrate pad', 'calib.active': 'Calibrating…', 'calib.fail': 'Calibration failed: ',
+    'ctl.play': 'Play / pause (Space)', 'ctl.prev': 'Previous frame (←)', 'ctl.next': 'Next frame (→)', 'ctl.rate': 'Playback speed', 'ctl.seek': 'Seek',
+    'layer.skel': 'Skeleton', 'layer.com': 'Balance point', 'layer.grid': 'Pad grid', 'layer.feet': 'Landings',
+    'charts.title': 'Timeline', 'win.8': '±4 s', 'win.30': '30 s', 'win.all': 'All', 'charts.hint': 'Click the graph to jump to that time',
+    'pad.title': 'Top view of the pad', 'pad.showAll': 'Show all landings',
+    'pad.rotate': 'Rotate the top view 90° (by default it turns to match the screen direction in the video; turn it back to that angle to return to auto)', 'pad.rotAuto': ' (auto)', 'lg.L': 'Left foot', 'lg.R': 'Right foot', 'lg.now': 'Landing now', 'lg.com': 'Balance point',
+    'lg.heelUp': 'Dashed heel = heel up',
+    'tab.advice': 'Advice', 'tab.metrics': 'Stats', 'tab.steps': 'Landings', 'tab.events': 'Balance events',
+    'dlg.title': 'Add a video', 'dlg.path': 'File path on this PC', 'dlg.or': 'or', 'dlg.file': 'Upload a file', 'dlg.q': 'Detection quality',
+    'dlg.q.acc': 'Accurate (about 0.3 s per frame)', 'dlg.q.fast': 'Fast (about 0.03 s per frame; may mix up left and right feet when one is hidden)',
+    'dlg.hint': 'Filming tip: film from behind and above the player at an angle, with the phone at about waist height. Show the whole pad and the whole body. This gives the best landings in all four directions.',
+    'dlg.cancel': 'Cancel', 'dlg.go': 'Start analysis', 'dlg.need': 'Enter a path or choose a file', 'dlg.uploading': 'Uploading…', 'dlg.fail': 'Failed',
+    'st.queued': 'waiting', 'st.preview': 'converting', 'st.pose': 'finding the skeleton', 'st.analyze': 'analyzing', 'st.processing': 'processing',
+    'st.error': ' (error)', 'st.eta': ', about {m} min left',
+    'b.homo': 'View: pad visible (4 directions)', 'b.side': 'View: low side view (only front–back is reliable)', 'b.none': 'Pad not calibrated',
+    'b.manual': 'Calibration: manual', 'b.glow': 'Calibration: auto (panel lights)', 'b.feet': 'Calibration: auto (footprint groups, reference only)', 'b.nocal': 'Calibration: none',
+    'b.trunk': 'Balance point: body + legs', 'b.pelvis': 'Balance point: from the hips (upper body off screen)', 'b.steps': '{n} steps · {r} steps/s', 'b.armEst': '{s}: {p}% estimated (mirror of the other hand)', 'foot.Lh': 'Left hand', 'foot.Rh': 'Right hand',
+    'b.noLights': 'No panel lights (an AI model guesses the panels from the skeleton)', 'b.modelSteps': 'No panel lights found: {n} steps guessed by the AI model',
+    'opt.title': 'This video:', 'opt.lights': 'Panels light up', 'opt.hideL': 'Left hand not in video', 'opt.hideR': 'Right hand not in video', 'opt.busy': 'Re-analyzing…',
+    'opt.lightsTip': 'Uncheck this for machines whose panels do not light up when you step on them (for example, old white cabinets: light from the speakers can look like panel lights). Then an AI model, trained on videos from machines with panel lights, decides the panels from the skeleton.',
+    'opt.armTip': 'Check this when this hand is not in the video. The hand position guessed by the skeleton model is not used. Instead, the balance point uses a mirror of the other hand or a relaxed, hanging arm.',
+    'opt.fail': 'Could not save the setting: ', 's.partTitle': 'Part of the foot used (skeleton only, for reference)',
+    'pad.screen': 'Screen', 'pad.noCalib': 'Too few landings to calibrate the pad', 'pad.sideNote': 'Left–right position is estimated',
+    'lane.com': 'Balance', 'lane.hip': 'Hip height', 'lane.steps': 'Landings', 'lane.lights': 'Lights', 'short.L': 'L', 'short.R': 'R',
+    'dir': 'to the {x}', 'row': '{a} row',
+    'now.frame': 'frame {i}', 'foot.L': 'Left foot', 'foot.R': 'Right foot', 'now.planted': 'On', 'now.moving': 'moving',
+    'now.lit': ' · light confirmed', 'now.heelUp': 'heel up {h} cm', 'now.heelDown': 'heel down', 'now.conf': 'confidence {c}',
+    'now.com': 'Balance point, {axis}: ', 'now.comVal': '{v} panels {d}', 'now.rel': ', {v} panels {d} of your feet', 'now.lights': 'Lights', 'now.knee': 'Knee angle', 'unit.panel': 'panels',
+    'conf.high': 'high', 'conf.medium': 'medium', 'conf.low': 'low',
+    'lv.bad': 'Fix this', 'lv.warn': 'Check', 'lv.info': 'Info', 'lv.good': 'Good', 'adv.fix': 'How to fix',
+    'adv.none': 'Not enough data to give advice.',
+    'adv.note': 'Advice is made automatically from data thresholds (for high-level players). All cm values are estimates, using about 28 cm per panel and about 38 cm for the lower leg.',
+    'm.duration': 'Video length', 'm.steps': 'Landings', 'm.rate': 'Step rate', 'm.comAxis': 'Balance direction we can measure',
+    'm.comSway': 'Balance point sway (std. dev.)', 'm.comBias': 'Average balance point offset (from pad center)', 'm.comRel': 'Balance point vs. middle of feet',
+    'm.comCenter': 'Balance point over the center panel', 'm.bounce': 'Hip bounce', 'm.liftMed': 'Foot lift height (median)', 'm.liftP90': 'Foot lift height (P90)',
+    'm.liftL': 'Left foot lift', 'm.liftR': 'Right foot lift', 'm.knee': 'Knee angle on landing (median)', 'm.edge': 'Steps only on the panel edge', 'm.off': 'Corner / off the pad',
+    'm.heelUp': 'Steps with the heel up', 'm.events': 'Big balance point shifts',
+    'm.hold': 'Wrist not moving (probably holding the bar): left {l}%, right {r}%',
+    'u.sec': ' s', 'u.sps': ' steps/s', 'u.panel': ' panels', 'u.pctLeg': ' % of leg length', 'u.steps': ' steps', 'u.times': ' times', 'u.events': '',
+    'u.posAxis': ' (+ = {x})',
+    's.arrow': 'Arrow', 's.spreadHead': 'Steps · spread · average offset (panels)',
+    's.spreadNote': 'Average offset: +x means to the right, +y means to the back. With auto (footprint) calibration, the offset is compared with your own average landing spot.',
+    's.litTitle': 'Panel lights (machine judgment)', 's.litSteps': 'Steps confirmed by lights', 's.lightOnly': 'Found only by lights (the skeleton missed the landing)',
+    's.agree': 'Skeleton matches lights', 's.untouched': 'Panel lit, but the skeleton foot did not touch it', 's.footExt': 'Light-match tolerance (heel / toe extension)', 's.shoe': 'Shoe length in top view (skeleton foot length × 1.1, est.)',
+    's.fit': 'Match rate before → after calibration', 's.partOf': 'Part used on {a}', 's.mm': 'Lit {a} / skeleton {b}',
+    's.mmNote': 'A mismatch like "Lit ↓ / skeleton Center" means the skeleton foot did not touch the lit panel. Foot length calibration fixes this (for example, when you hit ↓ with the heel).',
+    's.heelTitle': 'Heel up (medium and high confidence steps only)', 's.heelRow': '{p}% heel up ({n} steps)', 's.conf': 'Confidence',
+    's.confRow': 'high {h} · medium {m} · low {l}', 's.confNote': 'Confidence is based on: light confirmation, foot keypoint scores, whether the foot looks flat on screen, whether two heel checks agree, and how far the foot is inside the panel.',
+    's.counts': 'Steps per panel', 's.none': 'No landing data.',
+    'ev.title': 'Big balance point shifts', 'ev.desc': 'Compared with your usual position (average {b} cm), in the {axis} direction, these are the {n} parts where your balance point moved away the most. Click one to jump there and play it at 0.25× speed. The top view shows the path of your balance point for that part.',
+    'ev.type.travel': 'Whole body moved', 'ev.type.balance': 'Balance point outside feet', 'ev.noCause': 'No clear cause',
+    'ev.c.crossover': 'Crossover', 'ev.c.jump': 'Jump', 'ev.c.same_foot': 'Doublestep', 'ev.c.wide': 'Wide move (←→ / ↑↓)',
+    'ev.c.bar_release': 'Hand off the bar', 'ev.c.fast': 'Denser than usual',
+    'ev.statsTitle': 'Patterns that move your balance point most', 'ev.statsDesc': 'For each 3-step pattern: the average balance point shift in the 0.35 s after it (patterns seen 5 times or more). "×" compares it with the average for the whole song.',
+    'ev.pat': 'avg. {cm} cm · {r}× · {n} times', 'ev.causeTitle': 'Causes', 'ev.clear': 'Clear selection', 'ev.none': 'No big balance point shifts found.',
+    'ev.selected': 'Event #{k}', 'ev.types': 'Whole body moved {a} · Balance point outside feet {b}',
+    'paren': ' ({x})', 'p.sep': ' · ', 'p.colon': ': ',
   },
 };
 // 後端回傳的短標籤（中文）→ 翻譯
@@ -147,20 +218,37 @@ const VAL = {
     '右後（→↓ 之間）': '右後ろ（→↓ の間）', '左前（←↑ 之間）': '左前（←↑ の間）',
     '右前（→↑ 之間）': '右前（→↑ の間）', '左後（←↓ 之間）': '左後ろ（←↓ の間）',
   },
+  en: {
+    '中央': 'Center', '角落': 'Corner', '板外': 'Off pad', '中間列': 'Middle row', '中間': 'Middle',
+    '腳尖': 'toe', '腳跟': 'heel', '全腳': 'whole foot', '腳掌中段': 'mid-foot', '未碰到': 'no contact',
+    '重心': 'Balance', '省力': 'Stamina', '踩點': 'Footwork', '其他': 'Other',
+    '左右': 'left–right', '前後': 'front–back', '斜向（↖↘）': 'diagonal (↖↘)', '斜向（↗↙）': 'diagonal (↗↙)',
+    '右': 'right', '左': 'left', '後': 'back', '前': 'front',
+    '右後（→↓ 之間）': 'back-right (between → and ↓)', '左前（←↑ 之間）': 'front-left (between ← and ↑)',
+    '右前（→↑ 之間）': 'front-right (between → and ↑)', '左後（←↓ 之間）': 'back-left (between ← and ↓)',
+  },
 };
-let LANG = 'ja';                                         // 預設日文；使用者切換過就記住
-try { LANG = localStorage.getItem('ddr-lang') || 'ja'; } catch (e) { /* 無痕模式等 */ }
+// 第一次開啟依瀏覽器語言（英→en、中→zh、其他→日文）；使用者切換過就記住
+function browserLang() {
+  for (const l of navigator.languages || [navigator.language || '']) {
+    const p = String(l).toLowerCase().slice(0, 2);
+    if (p === 'ja' || p === 'zh' || p === 'en') return p;
+  }
+  return 'ja';
+}
+let LANG = 'ja';
+try { LANG = localStorage.getItem('ddr-lang') || browserLang(); } catch (e) { LANG = browserLang(); /* 無痕模式等 */ }
 if (!I18N[LANG]) LANG = 'ja';
 
 function t(key, vars) {
-  let s = I18N[LANG][key] ?? I18N.zh[key] ?? key;
+  let s = I18N[LANG][key] ?? I18N.ja[key] ?? key;
   if (vars) for (const [k, v] of Object.entries(vars)) s = s.split(`{${k}}`).join(v);
   return s;
 }
 const tv = v => (v == null ? v : (VAL[LANG] && VAL[LANG][v]) ?? v);
 
 function applyI18n() {
-  document.documentElement.lang = LANG === 'ja' ? 'ja' : 'zh-Hant-TW';
+  document.documentElement.lang = { ja: 'ja', zh: 'zh-Hant-TW', en: 'en' }[LANG];
   document.title = t('app.title');
   document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
   document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });

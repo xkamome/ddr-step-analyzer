@@ -1,4 +1,4 @@
-"""DDR 踩點／重心分析 — 本機伺服器。
+"""DDR 踩點／重心分析 — 本機伺服器（介面：日文／中文／英文）。
 
 啟動：python server.py  →  http://127.0.0.1:8765
   --no-browser   不自動開瀏覽器
@@ -132,6 +132,21 @@ def _opts_only(d: Path) -> dict:
     return {k: v for k, v in _read_calib(d).items() if k in OPT_KEYS}
 
 
+def _msg(ja: str, zh: str, en: str) -> dict:
+    """錯誤訊息：介面依目前語言顯示（app.js 的 L()）。"""
+    return {'ja': ja, 'zh': zh, 'en': en}
+
+
+def _stale(d: Path) -> bool:
+    """analysis.json 不存在、比骨架舊，或是舊版產生的（缺少某個建議語言）→ 要重新分析。"""
+    f = d / 'analysis.json'
+    if not f.exists() or f.stat().st_mtime < (d / 'pose.npz').stat().st_mtime:
+        return True
+    with f.open('rb') as fh:
+        head = fh.read(64)
+    return not head.startswith(('{"langs": ' + json.dumps(list(A.LANGS))).encode())
+
+
 # ───────────── API ─────────────
 
 class AddReq(BaseModel):
@@ -159,9 +174,9 @@ def list_videos():
 def add_video(req: AddReq):
     src = Path(req.path.strip().strip('"'))
     if not src.is_file():
-        raise HTTPException(400, f'ファイルが見つかりません／找不到檔案：{src}')
+        raise HTTPException(400, _msg(f'ファイルが見つかりません：{src}', f'找不到檔案：{src}', f'File not found: {src}'))
     if req.quality not in P.POSE_MODELS:
-        raise HTTPException(400, 'quality は accurate か fast／quality 必須是 accurate 或 fast')
+        raise HTTPException(400, _msg('quality は accurate か fast', 'quality 必須是 accurate 或 fast', 'quality must be accurate or fast'))
     return {'id': _enqueue(src, req.quality)}
 
 
@@ -177,7 +192,7 @@ async def upload(file: UploadFile = File(...), quality: str = Form('accurate')):
 def _vdir(vid: str) -> Path:
     d = DATA / vid
     if not re.fullmatch(r'[0-9A-Za-z_-]+', vid) or not d.is_dir():
-        raise HTTPException(404, '動画が見つかりません／沒有這支影片')
+        raise HTTPException(404, _msg('動画が見つかりません', '沒有這支影片', 'Video not found'))
     return d
 
 
@@ -185,18 +200,17 @@ def _vdir(vid: str) -> Path:
 def get_analysis(vid: str):
     d = _vdir(vid)
     if not (d / 'pose.npz').exists():
-        raise HTTPException(409, '骨格認識がまだ終わっていません／姿勢擷取尚未完成')
-    f = d / 'analysis.json'
-    if not f.exists() or f.stat().st_mtime < (d / 'pose.npz').stat().st_mtime:
+        raise HTTPException(409, _msg('骨格認識がまだ終わっていません', '姿勢擷取尚未完成', 'Skeleton detection is not finished yet'))
+    if _stale(d):
         A.analyze(d)
-    return FileResponse(f, media_type='application/json')
+    return FileResponse(d / 'analysis.json', media_type='application/json')
 
 
 @app.post('/api/videos/{vid}/calibration')
 def set_calibration(vid: str, req: CalibReq):
     d = _vdir(vid)
     if set(req.points) != set('LDUR') or any(len(v) != 2 for v in req.points.values()):
-        raise HTTPException(400, 'L/D/U/R の 4 点が必要です／需要 L/D/U/R 四個點')
+        raise HTTPException(400, _msg('L/D/U/R の 4 点が必要です', '需要 L/D/U/R 四個點', 'All 4 points (L/D/U/R) are needed'))
     cal = {**_opts_only(d), 'points': req.points}
     if req.foot_offset and len(req.foot_offset) == 2:
         cal['foot_offset'] = req.foot_offset
@@ -270,7 +284,7 @@ def _watchdog(server):
         empty_since = empty_since or now
         if now - empty_since > 10:           # 留 10 秒給「重新整理頁面」
             break
-    print('ブラウザが閉じられたので終了します。／瀏覽器已關閉，伺服器結束。', flush=True)
+    print('ブラウザが閉じられたので終了します。／瀏覽器已關閉，伺服器結束。／The browser was closed, so the server stops.', flush=True)
     server.should_exit = True
 
 
@@ -283,7 +297,7 @@ def _already_running():
 def main():
     sys.stdout.reconfigure(errors='replace')   # 主控台是 cp932 等編碼時，無法顯示的字元以 ? 代替
     if _already_running():
-        print(f'すでに起動しています／已經在執行：{URL}', flush=True)
+        print(f'すでに起動しています／已經在執行／Already running: {URL}', flush=True)
         if '--no-browser' not in sys.argv:
             webbrowser.open(URL)
         return
@@ -301,9 +315,11 @@ def main():
         threading.Thread(target=_watchdog, args=(server,), daemon=True).start()
     if '--no-browser' not in sys.argv:
         threading.Timer(1.5, lambda: webbrowser.open(URL)).start()
-    print(f'DDR ステップ解析／DDR 踩點分析：{URL}', flush=True)
+    print(f'DDR ステップ解析／DDR 踩點分析／DDR Step Analyzer: {URL}', flush=True)
     print('このウィンドウは解析サーバーです。ブラウザを閉じると自動で終了します（解析中は完了まで待ちます）。', flush=True)
     print('這個視窗是分析伺服器；關閉瀏覽器後會自動結束（分析中會等完成）。', flush=True)
+    print('This window is the analysis server. It closes by itself when you close the browser '
+          '(if a video is being analyzed, it waits until that is finished).', flush=True)
     server.run()
 
 

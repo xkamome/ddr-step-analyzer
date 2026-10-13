@@ -19,7 +19,7 @@ const BONES = [[17, 18, 'C'], [18, 5, 'L'], [18, 6, 'R'], [5, 7, 'L'], [7, 9, 'L
 const S = { list: [], id: null, A: null, fi: 0, layers: { skel: 1, com: 1, grid: 1, feet: 1 },
   win: 8, showAll: true, calib: null, drag: null, dirty: true, poll: null, ev: null, rot: {} };
 const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-const L = x => (x && typeof x === 'object') ? (x[LANG] ?? x.zh) : x;    // 後端雙語文字 {zh, ja}
+const L = x => (x && typeof x === 'object') ? (x[LANG] ?? x.ja ?? x.zh) : x;    // 後端多語文字 {zh, ja, en}
 const dirTxt = x => t('dir', { x: tv(x) });
 const stepAt = (s, i) => S.A.steps.find(x => x.foot === s && x.frame <= i && x.end >= i);
 
@@ -36,8 +36,8 @@ function renderList(keep = true) {
   for (const v of S.list) {
     const o = document.createElement('option'); o.value = v.id;
     const st = v.status === 'done' ? '' : v.status === 'error' ? t('st.error')
-      : `（${t('st.' + v.status)}` + (v.progress ? ` ${Math.round(v.progress * 100)}%` : '') +
-        (v.eta ? t('st.eta', { m: Math.ceil(v.eta / 60) }) : '') + '）';
+      : t('paren', { x: t('st.' + v.status) + (v.progress ? ` ${Math.round(v.progress * 100)}%` : '') +
+        (v.eta ? t('st.eta', { m: Math.ceil(v.eta / 60) }) : '') });
     o.textContent = (v.name || v.id) + st; o.disabled = v.status !== 'done';
     sel.appendChild(o);
   }
@@ -50,7 +50,7 @@ async function openVideo(id) {
   S.id = id; S.A = null; S.calib = null; S.ev = null; setCalibUI(false); setOptsUI();
   $('#empty').textContent = t('loading'); $('#empty').hidden = false;
   const r = await fetch(`/api/videos/${id}/analysis`);
-  if (!r.ok) { $('#empty').textContent = (await r.json()).detail || t('load.fail'); return; }
+  if (!r.ok) { $('#empty').textContent = L((await r.json()).detail) || t('load.fail'); return; }
   setAnalysis(await r.json());
   video.src = `/data/${id}/preview.mp4`;
   video.playbackRate = +$('#rate').value;
@@ -80,7 +80,7 @@ async function saveOpts() {
   boxes.forEach(b => b.disabled = true); $('#optBusy').hidden = false;
   try {
     const r = await fetch(`/api/videos/${id}/options`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) { alert(t('opt.fail') + ((await r.json()).detail || r.status)); setOptsUI(); return; }
+    if (!r.ok) { alert(t('opt.fail') + (L((await r.json()).detail) || r.status)); setOptsUI(); return; }
     const A = await r.json();
     if (S.id === id) { S.ev = null; setAnalysis(A); }
   } finally {
@@ -661,7 +661,7 @@ function drawCharts() {
           g.globalAlpha = st.from_light ? 0.6 : 1;
           g.fillRect(xa, top + rh * r + 2, Math.max(2, xb - xa), rh - 4); g.globalAlpha = 1;
           if (st.heel_up) { g.fillStyle = '#fff'; g.fillRect(xa, top + rh * r + 2, Math.max(2, xb - xa), 2); }
-          if (xb - xa > 12) { g.fillStyle = '#0b0d12'; g.textAlign = 'center'; g.fillText(st.panel?.[0] || '', (xa + xb) / 2, top + rh * r + rh / 2); }
+          if (xb - xa > 12) { g.fillStyle = '#0b0d12'; g.textAlign = 'center'; g.fillText(tv(st.panel)?.[0] || '', (xa + xb) / 2, top + rh * r + rh / 2); }
         }
       });
     }
@@ -686,16 +686,16 @@ function drawNow() {
     const st = stepAt(s, i);
     let txt = t('now.moving');
     if (st) {
-      txt = `${t('now.planted')} <b>${esc(tv(st.panel) || '-')}</b>` + (st.part ? `（${esc(tv(st.part))}）` : '') + (st.lit ? t('now.lit') : '');
-      if (st.heel_lift != null) txt += '・' + (st.heel_up ? t('now.heelUp', { h: st.heel_lift }) : t('now.heelDown'));
-      if (st.conf) txt += '・' + t('now.conf', { c: t('conf.' + st.conf) });
+      txt = `${t('now.planted')} <b>${esc(tv(st.panel) || '-')}</b>` + (st.part ? t('paren', { x: esc(tv(st.part)) }) : '') + (st.lit ? t('now.lit') : '');
+      if (st.heel_lift != null) txt += t('p.sep') + (st.heel_up ? t('now.heelUp', { h: st.heel_lift }) : t('now.heelDown'));
+      if (st.conf) txt += t('p.sep') + t('now.conf', { c: t('conf.' + st.conf) });
     }
-    parts.push(`${t('foot.' + s)}：${txt}`);
+    parts.push(`${t('foot.' + s)}${t('p.colon')}${txt}`);
   }
   const o = F.com_obs[i], AN = A.view.com_axis_names;
-  if (o != null && AN) parts.push(`${t('now.com', { axis: tv(AN.axis) })}<b>${dirTxt(o > 0 ? AN.pos : AN.neg)} ${Math.abs(o).toFixed(2)} ${t('unit.panel')}</b>` +
+  if (o != null && AN) parts.push(`${t('now.com', { axis: tv(AN.axis) })}<b>${t('now.comVal', { d: dirTxt(o > 0 ? AN.pos : AN.neg), v: Math.abs(o).toFixed(2) })}</b>` +
     (F.com_rel[i] != null ? t('now.rel', { d: dirTxt(F.com_rel[i] > 0 ? AN.pos : AN.neg), v: Math.abs(F.com_rel[i]).toFixed(2) }) : ''));
-  if (F.lights) { const on = 'LDUR'.split('').filter(k => F.lights[ARROW_KEYS[k]][i] > 0.4).map(k => ARROW_KEYS[k]); parts.push(`${t('now.lights')}：<b>${on.join(' ') || '—'}</b>`); }
+  if (F.lights) { const on = 'LDUR'.split('').filter(k => F.lights[ARROW_KEYS[k]][i] > 0.4).map(k => ARROW_KEYS[k]); parts.push(`${t('now.lights')}${t('p.colon')}<b>${on.join(' ') || '—'}</b>`); }
   const kn = ['L', 'R'].map(s => F.knee[s][i]).filter(v => v != null);
   if (kn.length && A.view.side_view) parts.push(`${t('now.knee')} ${kn.map(v => v.toFixed(0) + '°').join(' / ')}`);
   $('#nowInfo').innerHTML = parts.join('<br>');
@@ -719,7 +719,8 @@ function renderEvents() {
   let html = `<p class="note" style="margin-top:0">${t('ev.desc', { axis: tv(AN ? AN.axis : '-'), b: ST.baseline_cm ?? '-', n: E.length })}</p>`;
   html += '<div class="evlist">' + E.map((e, n) => {
     const causes = e.causes.length ? e.causes.map(c => `<span class="chip">${t('ev.c.' + c)}</span>`).join('') : `<span class="chip dim">${t('ev.noCause')}</span>`;
-    const seq = e.seq.map(s => `<span class="sq ${s.foot}">${s.foot === 'L' ? t('short.L') : t('short.R')}${esc(s.panel || '')}${s.heel_up ? '˄' : ''}</span>`).join('');
+    const pnl = p => (!p || /^[←↓↑→]$/.test(p) ? p || '' : ' ' + tv(p));     // 箭頭直接接在左右後面，其他（中央、角落）空一格
+    const seq = e.seq.map(s => `<span class="sq ${s.foot}">${s.foot === 'L' ? t('short.L') : t('short.R')}${esc(pnl(s.panel))}${s.heel_up ? '˄' : ''}</span>`).join('');
     const sel = S.ev && S.ev.frame === e.frame ? ' sel' : '';
     return `<div class="evrow${sel}" data-k="${n}">
       <div class="evh"><b>#${n + 1}</b> ${fmt(e.t)}　${dirTxt(e.dir === 'pos' ? AN.pos : AN.neg)} <b>${e.dev_cm} cm</b>　<span class="dim">${t('ev.type.' + e.type)}</span></div>
@@ -757,7 +758,7 @@ function renderMetrics() {
   const rows = [
     [t('m.duration'), M.duration_s, t('u.sec')], [t('m.steps'), M.steps, ''], [t('m.rate'), M.steps_per_s, t('u.sps')],
     [t('m.comAxis'), M.com_axis ? tv(M.com_axis) : null, ''],
-    [t('m.comSway'), M.com_sway, t('u.panel') + (M.com_sway_cm != null ? `（≈${M.com_sway_cm} cm）` : '')],
+    [t('m.comSway'), M.com_sway, t('u.panel') + (M.com_sway_cm != null ? t('paren', { x: `≈${M.com_sway_cm} cm` }) : '')],
     [t('m.comBias'), M.com_bias, t('u.panel') + pos], [t('m.comRel'), M.com_rel_feet, t('u.panel') + pos],
     [t('m.comCenter'), M.com_center_pct, ' %'], [t('m.events'), M.events, t('u.events')],
     [t('m.bounce'), M.bounce_pct, t('u.pctLeg')], [t('m.liftMed'), M.lift_cm_median, ' cm'], [t('m.liftP90'), M.lift_cm_p90, ' cm'],
@@ -783,7 +784,7 @@ function renderSteps() {
     </table>`;
   } else if (M.press_part) html += `<h2>${t('s.partTitle')}</h2>`;   // 踏板不亮燈：部位只靠骨架
   if (M.press_part) html += '<table>' + Object.entries(M.press_part).map(([k, v]) =>
-    `<tr><td>${t('s.partOf', { a: k })}</td><td>${Object.entries(v).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(tv(p))} ${n}`).join('・')}</td></tr>`).join('') + '</table>';
+    `<tr><td>${t('s.partOf', { a: k })}</td><td>${Object.entries(v).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(tv(p))} ${n}`).join(t('p.sep'))}</td></tr>`).join('') + '</table>';
   if (M.lit_steps) {
     if (M.lit_mismatch && Object.keys(M.lit_mismatch).length) html += '<table>' + Object.entries(M.lit_mismatch).map(([k, v]) => {
       const m = k.match(/^亮 (\S+)／骨架 (.+)$/);
@@ -800,7 +801,7 @@ function renderSteps() {
   }
   if (M.arrow_spread) {
     html += `<table style="margin-top:12px"><tr><td>${t('s.arrow')}</td><td>${t('s.spreadHead')}</td></tr>` +
-      Object.entries(M.arrow_spread).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}${t('u.steps')}・±${v.spread_cm} cm・(${v.offset[0] > 0 ? '+' : ''}${v.offset[0]}, ${v.offset[1] > 0 ? '+' : ''}${v.offset[1]})</td></tr>`).join('') + '</table>';
+      Object.entries(M.arrow_spread).map(([k, v]) => `<tr><td>${k}</td><td>${v.n}${t('u.steps')}${t('p.sep')}±${v.spread_cm} cm${t('p.sep')}(${v.offset[0] > 0 ? '+' : ''}${v.offset[0]}, ${v.offset[1] > 0 ? '+' : ''}${v.offset[1]})</td></tr>`).join('') + '</table>';
     html += `<p class="note">${t('s.spreadNote')}</p>`;
   }
   const cnt = M.panel_counts || M.row_counts;
@@ -1021,7 +1022,7 @@ $('#calibApply').onclick = async () => {
   $('#calibApply').textContent = t('calib.applying');
   const r = await fetch(`/api/videos/${S.id}/calibration`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ points, foot_offset: S.calib.footOff }) });
   $('#calibApply').textContent = t('calib.apply');
-  if (!r.ok) { alert(t('calib.fail') + ((await r.json()).detail || r.status)); return; }
+  if (!r.ok) { alert(t('calib.fail') + (L((await r.json()).detail) || r.status)); return; }
   S.calib = null; S.ev = null; setCalibUI(false); setAnalysis(await r.json());
 };
 $('#calibReset').onclick = async () => {
@@ -1043,7 +1044,7 @@ $('#addGo').onclick = async e => {
     } else if (path) {
       r = await fetch('/api/videos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, quality: q }) });
     } else { $('#addErr').textContent = t('dlg.need'); return; }
-    if (!r.ok) { $('#addErr').textContent = (await r.json()).detail || t('dlg.fail'); return; }
+    if (!r.ok) { $('#addErr').textContent = L((await r.json()).detail) || t('dlg.fail'); return; }
     $('#addDlg').close(); loadList();
   } catch (err) { $('#addErr').textContent = String(err); }
 };

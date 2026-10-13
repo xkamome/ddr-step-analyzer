@@ -5,6 +5,7 @@
 #   3. 骨格認識モデル（約 360 MB）をダウンロード
 #   4. デスクトップにショートカットを作成
 # オプション: -NoShortcut（ショートカットを作らない）
+# 画面のメッセージは日本語＋英語 / Messages are shown in Japanese and English
 param([switch]$NoShortcut)
 
 $ErrorActionPreference = 'Continue'
@@ -19,13 +20,15 @@ function Fail($m) {
   Write-Host ''
   Write-Host $m -ForegroundColor Red
   Write-Host 'うまくいかない場合は、この画面の写真を送ってください。' -ForegroundColor Yellow
+  Write-Host 'If it does not work, please send a photo of this screen.' -ForegroundColor Yellow
   exit 1
 }
 
-Say '=== DDR ステップ解析：セットアップ ==='
-Say "フォルダ：$Root"
+Say '=== DDR ステップ解析：セットアップ / DDR Step Analyzer: Setup ==='
+Say "フォルダ / Folder: $Root"
 if ($Root -match 'OneDrive') {
   Write-Host '注意：OneDrive のフォルダ内にあります。同期でとても遅くなることがあるので、C:\ddr-step-analyzer などに移動してからの実行をおすすめします。' -ForegroundColor Yellow
+  Write-Host 'Note: this folder is inside OneDrive. Syncing can make it very slow. We recommend moving it to a place like C:\ddr-step-analyzer first.' -ForegroundColor Yellow
 }
 
 function Get-PyExe([string]$cmd, [string[]]$pre) {
@@ -59,6 +62,7 @@ function Find-Python {
 $py = Find-Python
 if (-not $py) {
   Say 'Python が見つからないので、Python 3.12 をインストールします（数分かかります）…'
+  Say 'Python was not found, so Python 3.12 will be installed (this takes a few minutes)...'
   if (Get-Command winget -ErrorAction SilentlyContinue) {
     & winget install -e --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements | Out-Host
     $py = Find-Python
@@ -66,17 +70,17 @@ if (-not $py) {
   if (-not $py) {
     $url = 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe'
     $inst = Join-Path $env:TEMP 'python-3.12.10-amd64.exe'
-    Say 'Python のインストーラーをダウンロード中…'
+    Say 'Python のインストーラーをダウンロード中… / Downloading the Python installer...'
     try {
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
       Invoke-WebRequest -Uri $url -OutFile $inst -UseBasicParsing
-    } catch { Fail "Python のダウンロードに失敗しました。インターネット接続を確認して、もう一度 setup.bat を実行してください。`n$_" }
-    Say 'Python をインストール中…'
+    } catch { Fail "Python のダウンロードに失敗しました。インターネット接続を確認して、もう一度 setup.bat を実行してください。`nCould not download Python. Check your internet connection and run setup.bat again.`n$_" }
+    Say 'Python をインストール中… / Installing Python...'
     Start-Process -FilePath $inst -Wait -ArgumentList @('/quiet', 'InstallAllUsers=0', 'PrependPath=1',
       'Include_launcher=1', 'InstallLauncherAllUsers=0', 'Include_test=0')
     $py = Find-Python
   }
-  if (-not $py) { Fail 'Python のインストールに失敗しました。https://www.python.org/downloads/ から Python 3.12 を手動でインストールしてから、もう一度 setup.bat を実行してください。' }
+  if (-not $py) { Fail "Python のインストールに失敗しました。https://www.python.org/downloads/ から Python 3.12 を手動でインストールしてから、もう一度 setup.bat を実行してください。`nCould not install Python. Please install Python 3.12 yourself from https://www.python.org/downloads/ and run setup.bat again." }
 }
 Ok "Python：$py"
 
@@ -84,26 +88,28 @@ Ok "Python：$py"
 $Venv = Join-Path $env:LOCALAPPDATA 'ddr-pose\venv'
 $venvPy = Join-Path $Venv 'Scripts\python.exe'
 if (-not (Test-Path $venvPy)) {
-  Say "専用の Python 環境を作成中…（$Venv）"
+  Say "専用の Python 環境を作成中… / Creating a Python environment... ($Venv)"
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Venv) | Out-Null
   & $py -m venv $Venv
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail '仮想環境の作成に失敗しました。' }
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) { Fail "仮想環境の作成に失敗しました。`nCould not create the Python environment." }
 }
 Say 'パッケージをインストール中（初回は 5〜10 分ほどかかります）…'
+Say 'Installing packages (the first time takes about 5-10 minutes)...'
 & $venvPy -m pip install --upgrade pip --disable-pip-version-check -q
 & $venvPy -m pip install -r (Join-Path $Root 'requirements.txt') --disable-pip-version-check --no-warn-script-location
-if ($LASTEXITCODE -ne 0) { Fail 'パッケージのインストールに失敗しました。インターネット接続を確認して、もう一度 setup.bat を実行してください。' }
+if ($LASTEXITCODE -ne 0) { Fail "パッケージのインストールに失敗しました。インターネット接続を確認して、もう一度 setup.bat を実行してください。`nCould not install the packages. Check your internet connection and run setup.bat again." }
 & $venvPy -m pip install --no-deps rtmlib==0.0.16 --disable-pip-version-check -q
-if ($LASTEXITCODE -ne 0) { Fail 'rtmlib のインストールに失敗しました。' }
-Ok 'パッケージ OK'
+if ($LASTEXITCODE -ne 0) { Fail "rtmlib のインストールに失敗しました。`nCould not install rtmlib." }
+Ok 'パッケージ OK / Packages OK'
 
 # ── 3. モデル ──
 Say '骨格認識モデルをダウンロード中（約 360 MB、初回のみ）…'
+Say 'Downloading the skeleton detection models (about 360 MB, first time only)...'
 & $venvPy -m ddrpose.pose --download-models
-if ($LASTEXITCODE -ne 0) { Fail 'モデルのダウンロードに失敗しました。インターネット接続を確認して、もう一度 setup.bat を実行してください。' }
+if ($LASTEXITCODE -ne 0) { Fail "モデルのダウンロードに失敗しました。インターネット接続を確認して、もう一度 setup.bat を実行してください。`nCould not download the models. Check your internet connection and run setup.bat again." }
 & $venvPy -c "from ddrpose.pose import ffmpeg_exe; ffmpeg_exe()"
-if ($LASTEXITCODE -ne 0) { Fail 'ffmpeg の準備に失敗しました。' }
-Ok 'モデル OK'
+if ($LASTEXITCODE -ne 0) { Fail "ffmpeg の準備に失敗しました。`nCould not set up ffmpeg." }
+Ok 'モデル OK / Models OK'
 
 # ── 4. ショートカット ──
 if (-not $NoShortcut) {
@@ -116,9 +122,14 @@ if (-not $NoShortcut) {
     $lnk.IconLocation = "$env:SystemRoot\System32\imageres.dll,18"
     $lnk.Save()
     Ok 'デスクトップにショートカット「DDR ステップ解析」を作成しました。'
-  } catch { Write-Host 'ショートカットを作成できませんでした（start.bat から起動できます）。' -ForegroundColor Yellow }
+    Ok 'Created a desktop shortcut named "DDR ステップ解析" (DDR Step Analyzer).'
+  } catch {
+    Write-Host 'ショートカットを作成できませんでした（start.bat から起動できます）。' -ForegroundColor Yellow
+    Write-Host 'Could not create the shortcut (you can start the app with start.bat).' -ForegroundColor Yellow
+  }
 }
 
 Write-Host ''
-Ok '=== セットアップ完了 ==='
+Ok '=== セットアップ完了 / Setup complete ==='
 Ok 'デスクトップの「DDR ステップ解析」（またはこのフォルダの start.bat）をダブルクリックすると起動します。'
+Ok 'To start, double-click "DDR ステップ解析" on the desktop (or start.bat in this folder).'
